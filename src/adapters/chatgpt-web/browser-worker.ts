@@ -2743,6 +2743,29 @@ export class ChatGptBrowserWorker {
     await captureDiagnostic?.("effort-control-ready");
     await throwIfChatGptRateLimitDialog(page);
     let activation = await activateChatGptEffortMenu(page, currentEffort);
+    // Reuse only a live, unlocked selection whose family and effort both match.
+    if (modelFamily && !trackUsage) {
+      const state = await readChatGptEffortSnapshot(activation.sliderContainer).catch(() => undefined);
+      let unchanged = false;
+      if (state && state.value === state.min + uiEffortIndex && state.available[uiEffortIndex]) {
+        try {
+          await assertChatGptModelFamily(activation, modelFamily, mode.effort, uiEffortIndex, 0);
+          unchanged = true;
+        } catch (error) {
+          if (!(error instanceof ChatGptWebAdapterError)) throw error;
+        }
+      }
+      if (unchanged) {
+        const url = page.url();
+        await page.keyboard.press("Escape");
+        await settleChatGptUi();
+        const selectedMode = { ...mode, modelFamily,
+          selection: { url, label: (await currentEffort.innerText()).trim() } };
+        await this.assertSelectedEffort(page, selectedMode, false);
+        await captureDiagnostic?.("effort-selection-confirmed");
+        return selectedMode;
+      }
+    }
     if (modelFamily) activation = await selectChatGptModelFamily(
       activation, modelFamily, () => activateChatGptEffortMenu(page, currentEffort),
     );
@@ -2843,7 +2866,7 @@ export class ChatGptBrowserWorker {
     if (confirmedState.min !== initialMin || confirmedState.value !== targetValue) {
       throw chatGptModelControlUnavailableAdapterError("ChatGPT did not persist the requested effort after closing its menu");
     }
-    if (modelFamily) await assertChatGptModelFamily(confirmation, modelFamily, mode.effort, uiEffortIndex, 1_000);
+    if (modelFamily) await assertChatGptModelFamily(confirmation, modelFamily, mode.effort, uiEffortIndex);
     // A bare 'Pro' trigger does not identify the family selected by ChatGPT's Latest option.
     // Unknown evidence remains visible as unclassified Pro usage in Limits.
     if (trackUsage) {
@@ -4406,6 +4429,7 @@ export class ChatGptBrowserWorker {
     await input.waitFor({ state: "attached", timeout: 20_000 });
     const uploads = await observeChatGptAttachmentUploads(page, files.map(file => file.name));
     try {
+      uploads.throwIfFailed();
       await withBrowserTurnAbort(input.setInputFiles(files), abortSignal);
       try {
         await withBrowserTurnAbort(Promise.all([uploads.wait(abortSignal), ...files.map(file => (

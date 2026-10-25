@@ -299,6 +299,8 @@ export interface CodexProviderConfig {
     headed?: boolean;
     /** Attach the turn-bound Codex MCP capability for every connector-capable Web model. */
     localToolsEnabled?: boolean;
+    /** Strict JSON tool requests relayed to native Codex without a ChatGPT MCP connector. */
+    textToolsEnabled?: boolean;
     /** Account capability proven by the authenticated browser probe. */
     solAvailable?: boolean;
     /** Account capability proven by the authenticated browser probe. */

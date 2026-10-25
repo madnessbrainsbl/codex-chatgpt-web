@@ -67,3 +67,14 @@ test("repeated picker version verifies GPT-5.6 Pro without accepting conflicting
   expect(chatGptModelFamilyMatches(["6 Astra 6 Pro"], "6", "max")).toBeTrue();
   expect(chatGptModelFamilyMatches(["6 Astra 6 Pro"], "6", "high")).toBeFalse();
 });
+
+test("Russian effort labels verify the selected family without accepting other efforts or models", () => {
+  for (const [label, effort] of [["Мгновенно", "low"], ["Средний", "medium"], ["Высокий", "high"], ["Очень высокий", "xhigh"]] as const) {
+    expect(chatGptModelFamilyMatches([`6 ${label}, 3 из 3.`], "6", effort)).toBeTrue();
+    expect(chatGptModelFamilyMatches([`5.6 ${label}, 3 из 3.`], "6", effort)).toBeFalse();
+  }
+  expect(chatGptModelFamilyMatches(["6 Высокий, 3 из 3.", "Высокий"], "6", "high")).toBeTrue();
+  expect(chatGptModelFamilyMatches(["6 Высокий, 3 из 3."], "6", "medium")).toBeFalse();
+  expect(chatGptModelFamilyMatches(["6 Высокий, 3 из 3.", "5.6 High"], "6", "high")).toBeFalse();
+  expect(chatGptModelFamilyMatches(["6 Высокий для лучших ответов"], "6", "high")).toBeFalse();
+});

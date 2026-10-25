@@ -1022,6 +1022,8 @@ export function startServer(
           version: VERSION,
           mode: config.mode,
           pid: process.pid,
+          tool_transport: config.toolTransport ?? "mcp",
+          use_saved_chats: config.useSavedChats,
           port: config.port,
           uptime: (Date.now() - startedAt) / 1_000,
           accepting_turns: !draining,

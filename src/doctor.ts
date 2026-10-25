@@ -216,7 +216,9 @@ export async function runDoctor(): Promise<DoctorReport> {
       detail: "Verify it once at https://chatgpt.com/#settings/Plugins while the tunnel is ready.",
     });
   } else {
-    checks.push({ id: "tools", status: "warning", message: "Browser-only mode intentionally has no local tools or MCP tunnel" });
+    checks.push(config.toolTransport === "text"
+      ? { id: "tools", status: "ok", message: "Temporary Chat JSON tools are relayed to native Codex; no ChatGPT connector is required" }
+      : { id: "tools", status: "warning", message: "Browser-only mode intentionally has no local tools or MCP tunnel" });
   }
 
   return {

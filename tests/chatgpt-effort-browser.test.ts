@@ -5,6 +5,25 @@ import { ChatGptBrowserWorker, setChatGptThinkMode } from "../src/adapters/chatg
 import { CHATGPT_COMPOSER_SELECTOR, detectChatGptAccountCapabilities } from "../src/chatgpt-session";
 import { assertChatGptModelFamily } from "../src/adapters/chatgpt-web/model-selection";
 
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("pre-send family verification waits for the current slider announcement to settle", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<div id="picker" role="menu">
+      <div role="menuitemradio" aria-checked="true">6</div>
+      <span id="status">6 Medium, 2 из 3.</span>
+      <div role="menuitem" aria-describedby="status"><div data-model-picker-power-slider>
+        <span role="slider" aria-valuemin="0" aria-valuemax="2" aria-valuenow="2"></span>
+      </div></div></div>
+      <script>setTimeout(() => document.querySelector('#status').textContent='6 Высокий, 3 из 3.', 200);</script>`);
+    const menu = { menu: page.locator("#picker"), slider: page.locator('[role="slider"]') } as Parameters<typeof assertChatGptModelFamily>[0];
+    await assertChatGptModelFamily(menu, "6", "high", 2);
+    await page.locator('#status').evaluate(element => { element.textContent = "5.6 High, 3 of 3."; });
+    const failure = await assertChatGptModelFamily(menu, "6", "high", 2, 0).then(() => undefined, error => error);
+    expect(failure).toMatchObject({ code: "model_version_unavailable", retryable: false });
+  } finally { await browser.close(); }
+}, 15_000);
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-5.6 Pro verifies the split model/effort header before Send (#875)", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
@@ -120,6 +139,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-6 and GPT-5.6 remain dis
         const control=document.querySelector('button'),menu=document.querySelector('#picker'),view=document.querySelector('[data-model-picker-view]');
         const toggle=document.querySelector('[data-model-picker-view-toggle]'), models=document.querySelector('#models');
         const labels=['Instant','Medium','High']; let family='6',value=1;
+        window.pickerOpens=0;
         function render(){
           document.querySelector('#status').textContent=family+' '+labels[value]+', '+(value+1)+' of 3.';
           toggle.firstElementChild.textContent=(family==='6'?'':'5.6 Sol ')+labels[value];
@@ -127,7 +147,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-6 and GPT-5.6 remain dis
             +labels.map((_,i)=>'<span data-selected="'+(i<=value)+'"></span>').join('')
             +'<span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="2" aria-valuenow="'+value+'"></span></span>';
         }
-        control.onclick=()=>{menu.hidden=false;control.setAttribute('aria-expanded','true');render();};
+        control.onclick=()=>{window.pickerOpens++;menu.hidden=false;control.setAttribute('aria-expanded','true');render();};
         toggle.onclick=()=>{view.setAttribute('data-model-picker-view','advanced');models.hidden=false;};
         document.querySelectorAll('[role=menuitemradio]').forEach((radio,index)=>{radio.onclick=()=>{
           family=index===0?'6':'5.6';
@@ -141,8 +161,14 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-6 and GPT-5.6 remain dis
       </script>`);
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     const caps = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false };
-    for (const [family, effort] of [["5.6", "low"], ["6", "high"], ["5.6", "medium"], ["6", "medium"]] as const) {
+    for (const [family, effort] of [["6", "medium"], ["5.6", "low"], ["6", "high"], ["5.6", "medium"], ["6", "medium"], ["6", "medium"]] as const) {
+      const before = await page.evaluate(() => (window as any).pickerOpens);
+      const initialFamily = await page.locator('[role=menuitemradio][aria-checked=true]').textContent();
+      const initialEffort = await page.locator('button').textContent();
       const selected = await worker.selectModelAndEffort(page, "gpt-5.6-sol", effort, caps, undefined, false, family);
+      if (family === "6" && initialFamily === "6" && initialEffort === "Medium" && effort === "medium") {
+        expect(await page.evaluate(() => (window as any).pickerOpens) - before).toBe(1);
+      }
       expect(selected.modelFamily).toBe(family);
       await worker.assertSelectedEffort(page, selected);
       expect(await page.locator('[role=menuitemradio][aria-checked=true]').textContent()).toBe(family === "6" ? "6" : "GPT-5.6 Sol");

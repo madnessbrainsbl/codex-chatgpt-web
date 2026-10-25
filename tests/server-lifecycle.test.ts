@@ -1134,8 +1134,16 @@ test("a drained runtime rejects new model-catalog work before shutdown", async (
       error: {
         type: "server_error",
         message: "codex-chatgpt-web is draining for a requested service operation",
+        code: "bridge_service_restarting",
       },
     });
+
+    const compact = await fetch(`${endpoint}/v1/responses`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "chatgpt-web/gpt-6-sol", input: [{ type: "compaction_trigger" }] }),
+    });
+    expect(compact.status).toBe(503);
+    expect(await compact.json()).toMatchObject({ error: { code: "bridge_service_restarting" } });
 
     const resume = await fetch(`${endpoint}/admin/resume`, {
       method: "POST",

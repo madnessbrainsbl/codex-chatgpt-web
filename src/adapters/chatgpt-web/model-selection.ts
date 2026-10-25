@@ -74,14 +74,17 @@ export function chatGptModelFamilyMatches(
   // GPT-6 uses Sol below Pro and Astra at Pro. An old Latest picker can still use
   // 5.6 at lower efforts; that is not proof of an explicitly requested GPT-6 turn.
   const expectedName = family === "6" && effort === "max" ? "astra" : "sol";
-  const expectedMode = { low: "instant", medium: "medium", high: "high", xhigh: "extra high", max: "pro" }[effort];
+  const expectedModes = {
+    low: ["instant", "мгновенно"], medium: ["medium", "средний"],
+    high: ["high", "высокий"], xhigh: ["extra high", "очень высокий"], max: ["pro"],
+  }[effort];
   const states = descriptions.flatMap(text => {
     const state = parseChatGptModelAnnouncement(text);
     return state ? [state] : [];
   });
   return states.length > 0 && states.every(state => state.version === family
     && (!state.name || state.name === expectedName)
-    && state.mode.toLowerCase() === expectedMode);
+    && expectedModes.includes(state.mode.toLowerCase()));
 }
 
 export async function assertChatGptModelFamily(
@@ -89,7 +92,7 @@ export async function assertChatGptModelFamily(
   family: ChatGptWebModelFamily,
   effort: ChatGptWebAdapterEffort,
   effortIndex: number,
-  settleMs = 0,
+  settleMs = 5_000,
 ): Promise<void> {
   const deadline = Date.now() + settleMs;
   do {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { CHATGPT_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME } from "../../config";
 import { selectedSkillFile, skillFileTokens, type ChatGptSkillFile } from "./skill-attachments";
+import { TEXT_TOOL_CONTRACT, textToolCatalog, textToolContextMessages } from "./text-tools";
 import {
   CHATGPT_WEB_GPT6_INSTANT_BIGGER_CONTEXT_ERROR,
   chatGptWebImageTokenReserve,
@@ -39,6 +40,8 @@ export interface CompiledChatGptWebPrompt {
 }
 
 export interface CompileChatGptWebPromptOptions {
+  textTools?: boolean;
+  textToolContinuation?: boolean;
   /** The same display name used to select the ChatGPT plugin for this turn. */
   appName?: string;
   captureLunaCheckpoint?: boolean;
@@ -489,7 +492,8 @@ export function compileChatGptWebPrompt(
   if (!mode.localTools && turnToken !== undefined) {
     throw new Error("A read-only ChatGPT Web effort must not receive a local-tool capability token");
   }
-  const system = parsed.context.systemPrompt ?? [];
+  const textTools = options?.textTools === true && !parsed._compactionRequest;
+  const system = [...(parsed.context.systemPrompt ?? []), ...(textTools && !options?.textToolContinuation ? [textToolCatalog(parsed)] : [])];
   const sharedContract = [
     "Act as the model backend for the Codex task encoded below.",
     multipartEnabled
@@ -526,7 +530,7 @@ export function compileChatGptWebPrompt(
       "Do not call local or ChatGPT-native tools. Summarize only the supplied task context according to the final compaction instruction.",
       "Return only the checkpoint summary that the next model needs to resume the task.",
       ]
-    : mode.localTools
+    : textTools ? [TEXT_TOOL_CONTRACT] : mode.localTools
     ? [
       "For local work required by the task, use the selected plugin's tools directly according to their declared descriptions and schemas.",
       "These tools are connected by the user to their Codex runtime; local actions execute on that runtime's device under its configured sandbox and approval rules. Assess each action by its actual effects and the user's authorization; an authenticated connection does not make every action low risk.",
@@ -548,7 +552,7 @@ export function compileChatGptWebPrompt(
       "Do not claim a new local inspection, command, edit, or verification unless it actually appears in the task history. If the latest request requires fresh local-computer access or a local mutation, state only that exact limitation instead of inventing success.",
       "Otherwise perform the full requested research, analysis, or synthesis with every capability actually available to you; do not stop at a plan or progress report.",
     ];
-  const outputControlContract = parsed._compactionRequest
+  const outputControlContract = parsed._compactionRequest || textTools
   ? []
   : [
     ...(parsed.options.verbosity === "low"
@@ -638,7 +642,8 @@ export function compileChatGptWebPrompt(
       ...(skillFiles.length ? { skillFiles } : {}),
       ...(mode.localTools && !manualControl && !parsed._compactionRequest ? { turnToken } : {}),
     };
-    const answerContract = captureLunaCheckpoint
+    const answerContract = textTools ? "Execute the latest active task now using exactly one JSON transport response."
+      : captureLunaCheckpoint
       ? "Return the complete answer that the outer Codex task should receive, then the required private checkpoint tail."
       : "Return only the answer that the outer Codex task should receive.";
     if (multipartEnabled) {
@@ -735,11 +740,13 @@ export function compileChatGptWebPrompt(
           : "Produce the requested checkpoint summary now without calling tools.",
         "</codex_transport_resume>",
       ] : transportResume),
+      ...(textTools ? [TEXT_TOOL_CONTRACT] : []),
     ].join("\n");
     return { text, images, ...attachments };
   };
 
   let sourceMessages = withoutSupersededModelSwitchContracts(parsed.context.messages);
+  if (options?.textTools) sourceMessages = textToolContextMessages(sourceMessages);
   const initialMessageCount = sourceMessages.length;
   let compiled = build(sourceMessages);
   if (!parsed._compactionRequest) return compiled;

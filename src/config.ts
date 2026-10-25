@@ -122,6 +122,7 @@ export interface AppConfig {
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
   useSavedChats: boolean;
+  toolTransport?: "mcp" | "text";
   /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
@@ -563,6 +564,12 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid useSavedChats in ${path}`);
   }
   const useSavedChats = parsed.useSavedChats !== false;
+  if (parsed.toolTransport !== undefined && parsed.toolTransport !== "mcp" && parsed.toolTransport !== "text") {
+    throw new Error(`Invalid toolTransport in ${path}`);
+  }
+  if (parsed.toolTransport === "text" && (browserInteractionMode !== "automatic" || useSavedChats)) {
+    throw new Error("Text tools require automatic mode with Save chats in ChatGPT disabled");
+  }
   if (browserInteractionMode === "manual" && experimentalSkillAttachments) {
     throw new Error(`Zero Risk does not support Skills as files in ${path}`);
   }
@@ -641,7 +648,8 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       threadEnvironmentStatePath: join(getConfigDir(), "runtime", "thread-environments.json"),
       lunaCheckpointStatePath: join(getConfigDir(), "runtime", "luna-checkpoints.json"),
       headed: config.headed,
-      localToolsEnabled: config.mode === "full",
+      localToolsEnabled: config.mode === "full" && config.toolTransport !== "text",
+      textToolsEnabled: config.toolTransport === "text",
       solAvailable: manual ? false : config.solAvailable,
       extraHighAvailable: !manual && config.extraHighAvailable === true,
       proAvailable: manual ? false : config.proAvailable,
