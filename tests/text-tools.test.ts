@@ -68,6 +68,21 @@ test("invalid auto-mode envelopes finish clearly without executing a local tool"
   expect(() => textToolEvents(response, parsed, "id", usage)).toThrow();
 });
 
+test("one redundant closing brace after a complete envelope preserves the exact validated call", () => {
+  const parsed = request();
+  const cmd = "Get-Content 'C:\\sample\\file.txt'\nWrite-Output '{\"value\":\"quoted\"}'";
+  const valid = JSON.stringify({ kind: "tool", name: "functions__exec_command", arguments: { cmd } });
+  const expected = textToolEvents(valid, parsed, "id", usage);
+  for (const answer of [valid + "}", "```json\n" + valid + "}\n```", valid + "\n}\n"]) {
+    expect(textToolEvents(answer, parsed, "id", usage)).toEqual(expected);
+  }
+  parsed.options.toolChoice = "required";
+  for (const answer of [valid + "}}", valid + valid, valid + "} trailing", valid.slice(0, -1),
+    valid.replace("functions__exec_command", "unknown") + "}",
+    JSON.stringify({ kind: "tool", name: "functions__exec_command", arguments: { cmd: 42 } }) + "}",
+  ]) expect(() => textToolEvents(answer, parsed, "id", usage)).toThrow();
+});
+
 test("freeform input survives exactly; tool choice is enforced", () => {
   const parsed = request();
   parsed.context.tools = [{ name: "apply_patch", description: "Patch", parameters: {}, freeform: true }];

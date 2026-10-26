@@ -67,7 +67,14 @@ export function textToolEvents(
   if (answer.length > 4 * 1024 * 1024) invalid("response exceeds 4 MiB");
   let value: unknown;
   const fenced = /^\s*```(?:json)?\s*\n([\s\S]*?)\n```\s*$/i.exec(answer);
-  try { value = JSON.parse(fenced ? fenced[1]! : answer); } catch {
+  const json = (fenced ? fenced[1]! : answer).trimEnd();
+  try {
+    try { value = JSON.parse(json); } catch (error) {
+      // Accept one surplus root brace only if the untouched prefix is complete JSON.
+      if (!json.endsWith("}")) throw error;
+      value = JSON.parse(json.slice(0, -1));
+    }
+  } catch {
     if ((parsed.options.toolChoice === undefined || parsed.options.toolChoice === "auto")
       && parsed.options.outputFormat === undefined) {
       return [
