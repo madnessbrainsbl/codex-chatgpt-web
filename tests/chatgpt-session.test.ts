@@ -8,8 +8,27 @@ import {
   activateChatGptEffortMenu,
   assertNewChatPage,
   chatGptNewChatUrl,
+  chatGptProjectUrl,
   detectChatGptAccountCapabilities,
 } from "../src/chatgpt-session";
+
+test("project conversations require an exact saved project surface", async () => {
+  const project = "https://chatgpt.com/g/g-p-0123456789abcdef0123456789abcdef-demo/project";
+  expect(chatGptProjectUrl(project)).toBe(project);
+  for (const invalid of [project + "?temporary-chat=true", project + "/c/old", project.replace("chatgpt.com", "example.com"), project.replace("https:", "http:"), "https://chatgpt.com/c/old"]) {
+    expect(() => chatGptProjectUrl(invalid)).toThrow();
+  }
+  await expect(assertNewChatPage({ url: () => project } as any, true, project)).resolves.toBeUndefined();
+  await expect(assertNewChatPage({ url: () => "https://chatgpt.com/" } as any, true, project)).rejects.toThrow();
+  await expect(assertNewChatPage({ url: () => project } as any, false, project)).rejects.toThrow();
+  let url = "about:blank";
+  const absent: any = { filter: () => absent, last: () => absent, isVisible: async () => false };
+  const composer: any = { count: async () => 1, nth: () => composer, isVisible: async () => true };
+  const page: any = { url: () => url, goto: async (next: string) => { url = next; },
+    locator: (selector: string) => selector === CHATGPT_COMPOSER_SELECTOR ? composer : absent };
+  await (ChatGptBrowserWorker.prototype as any).prepareChatSurface.call({ activeComposer: async () => composer }, page, undefined, true, undefined, project);
+  expect(url).toBe(project);
+});
 
 test("saved chats start empty and cannot reuse an arbitrary conversation or a Temporary Chat", async () => {
   expect(chatGptNewChatUrl()).toBe("https://chatgpt.com/?temporary-chat=true");

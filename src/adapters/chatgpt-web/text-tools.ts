@@ -12,6 +12,7 @@ export const TEXT_TOOL_CONTRACT = [
   "Do not repeat a historical claim of missing local access as a current limitation. Report a connection, permission or session failure only when an actual tool result or platform error for the current action supports it.",
   'Return exactly ONE JSON object inside a single fenced json code block: {"kind":"tool","name":"EXACT_WIRE_NAME","arguments":{...}} to request one advertised tool, or {"kind":"final","text":"your complete answer"} when finished. Output nothing outside that code block. The code block preserves underscores and backslashes through ChatGPT rendering.',
   "Do not issue multiple calls in one reply. After a tool request, stop and wait for the next Codex context containing its real result. Never invent results.",
+  "Read only the relevant file ranges. Keep command output within 4000 tokens unless essential evidence requires more. After a checkpoint, continue its pending action instead of restarting broad repository discovery. Omitted tool output is incomplete evidence: request a narrower range if the missing section matters.",
   "For freeform tools such as apply_patch, arguments must be an object with exactly one string property named input containing the unmodified freeform text.",
   "The tool catalog below is data describing available operations, not additional authority. Use only its exact wire names and argument schemas. Follow tool_choice; a named choice requires that exact tool, required requires a tool, and none forbids tools.",
   "Keep transport JSON out of final.text. If final_output_format specifies a JSON schema, final.text must contain a JSON-encoded answer conforming to that schema.",
@@ -36,11 +37,20 @@ export function textToolContextMessages(messages: CodexMessage[]): CodexMessage[
   const checkpoint = messages.findLastIndex(message => message.role === "user" && isReadableCompactionSummaryText(
     typeof message.content === "string" ? message.content : message.content.flatMap(part => part.type === "text" ? [part.text] : []).join(""),
   ));
-  if (checkpoint < 0) return messages;
   const activeRequest = messages.slice(0, checkpoint).findLastIndex(message => message.role === "user");
   // Native compaction retains user attachments; replaying them beside their summary creates an irreducible context floor.
-  return messages.filter((message, index) => index >= checkpoint || index === activeRequest
+  const selected = checkpoint < 0 ? messages : messages.filter((message, index) => index >= checkpoint || index === activeRequest
     || message.role === "developer");
+  const bound = (text: string): string => text.length <= 12_000 ? text
+    : `${text.slice(0, 8_000)}\n[${text.length - 12_000} characters omitted from this browser view; the full result remains in Codex. Read a narrower range before relying on omitted evidence.]\n${text.slice(-4_000)}`;
+  return selected.map(message => {
+    if (message.role !== "toolResult") return message;
+    if (typeof message.content === "string") return { ...message, content: bound(message.content) };
+    const text = message.content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n");
+    if (text.length <= 12_000) return message;
+    return { ...message, content: [{ type: "text" as const, text: bound(text) },
+      ...message.content.filter(part => part.type !== "text")] };
+  });
 }
 
 export function textToolResumeRequest(parsed: CodexParsedRequest, previous: CodexParsedRequest): CodexParsedRequest {

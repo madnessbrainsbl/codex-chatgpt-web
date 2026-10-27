@@ -1,4 +1,5 @@
 import { validateSkillFiles } from "./skill-attachments";
+import { chatGptProjectUrl } from "../../chatgpt-session";
 import { createInterface } from "node:readline";
 import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
@@ -33,6 +34,7 @@ interface RunMessage {
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;
     conversationKey?: string;
+    projectUrl?: string;
     compaction?: boolean;
     captureLunaCheckpoint?: boolean;
     externalProgress?: boolean;
@@ -162,6 +164,10 @@ async function run(message: RunMessage): Promise<void> {
     throw new Error("Browser helper turn identity is invalid");
   }
   if (abortControllers.has(message.id)) throw new Error(`Browser helper turn already exists: ${message.id}`);
+  if (message.turn.projectUrl !== undefined) {
+    if (typeof message.turn.projectUrl !== "string") throw new Error("Browser helper project URL is invalid");
+    chatGptProjectUrl(message.turn.projectUrl);
+  }
   if (message.turn.resumeAvailable !== undefined && typeof message.turn.resumeAvailable !== "boolean") {
     throw new Error("Browser helper resume availability is invalid");
   }
@@ -229,6 +235,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),
     ...(message.turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
+    ...(message.turn.projectUrl ? { projectUrl: message.turn.projectUrl } : {}),
     abortSignal: abortController.signal,
     ...(message.turn.compaction ? { compaction: true } : {}),
     ...(progress ? {

@@ -1,6 +1,6 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { textToolEvents } from "../src/adapters/chatgpt-web/text-tools";
+import { textToolEvents, textToolContextMessages } from "../src/adapters/chatgpt-web/text-tools";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { estimateChatGptWebUsage, resolveBiggerContextMultipartParts } from "../src/adapters/chatgpt-web/usage";
 import { compiledChatGptWebMessages, estimateCompiledChatGptWebInputTokens } from "../src/adapters/chatgpt-web/input-tokens";
@@ -12,9 +12,36 @@ import { defaultConfig, providerConfig } from "../src/config";
 import { COMPACT_PROMPT, SUMMARY_PREFIX } from "../src/responses/compaction";
 import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS } from "../src/chatgpt-web-models";
 import { estimateTokens } from "../src/lib/token-estimate";
+import { resolve } from "node:path";
+import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
 const usage = { inputTokens: 1, outputTokens: 1 };
+
+test("browser projection bounds large tool results without changing native history or error status", () => {
+  const messages: any[] = [{ role: "toolResult", toolCallId: "read", toolName: "exec_command",
+    isError: true, timestamp: 1, content: "BEGIN\n" + "large output\n".repeat(10000) + "\nEND" }];
+  const before = JSON.stringify(messages);
+  const projected = textToolContextMessages(messages);
+  expect(JSON.stringify(messages)).toBe(before);
+  expect(projected[0]).toMatchObject({ role: "toolResult", toolCallId: "read", isError: true });
+  const content = projected[0]!.content as string;
+  expect(content.length).toBeLessThan(13000);
+  expect(content).toStartWith("BEGIN\n");
+  expect(content).toEndWith("\nEND");
+  expect(content).toContain("omitted");
+  messages[0].content = [{ type: "text", text: "A".repeat(10000) }, { type: "image", imageUrl: "https://example.org/evidence.png" },
+    { type: "text", text: "B".repeat(10000) }];
+  const mixed = textToolContextMessages(messages)[0]!.content;
+  expect(JSON.stringify(mixed).length).toBeLessThan(13000);
+  expect(mixed).toContainEqual({ type: "image", imageUrl: "https://example.org/evidence.png" });
+});
+
+test("saved chats can use validated native text tools without enabling MCP", () => {
+  expect(() => createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: "https://chatgpt.com",
+    chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useSavedChats: true, solAvailable: true },
+  })).not.toThrow();
+});
 function request(): CodexParsedRequest {
   const id = randomUUID();
   return {
@@ -32,6 +59,35 @@ function request(): CodexParsedRequest {
     },
   };
 }
+
+test("a trusted workspace routes to its saved project while other workspaces keep their privacy mode", async () => {
+  const root = resolve("test-workspaces", "hh");
+  const projectUrl = "https://chatgpt.com/g/g-p-0123456789abcdef0123456789abcdef-demo/project";
+  let cwd = root;
+  const environment = spyOn(ChatGptThreadEnvironmentStore.prototype, "resolve").mockImplementation(() => ({
+    cwd, roots: [cwd], writableRoots: [cwd], sandboxPolicy: { type: "dangerFullAccess" }, tools: [],
+  }));
+  const routes: (string | undefined)[] = [];
+  const browser = spyOn(ChatGptBrowserWorker, "forProvider").mockReturnValue({ appName: "Codex Native2",
+    async run(turn: any) {
+      routes.push(turn.projectUrl);
+      await turn.prepare();
+      const answer = '{"kind":"final","text":"ok"}';
+      turn.onTextDelta(answer); return answer;
+    },
+  } as any);
+  try {
+    const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `project-test://${randomUUID()}`,
+      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true,
+        savedChatProjects: [{ root, url: projectUrl }] } });
+    for (cwd of [root, resolve(root, "src"), root + "-other"]) {
+      const events: AdapterEvent[] = [];
+      await adapter.runTurn(request(), { headers: new Headers() }, event => events.push(event));
+      expect(events.some(event => event.type === "error")).toBeFalse();
+    }
+    expect(routes).toEqual([projectUrl, projectUrl, undefined]);
+  } finally { browser.mockRestore(); environment.mockRestore(); }
+});
 
 test("valid call is relayed to native Codex; malformed, unknown and invalid calls fail closed", () => {
   const parsed = request();

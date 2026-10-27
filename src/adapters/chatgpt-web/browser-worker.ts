@@ -55,6 +55,7 @@ import {
   assertAuthenticatedChatGptPage,
   assertNewChatPage,
   chatGptNewChatUrl,
+  chatGptProjectUrl,
   chatGptAssistantTurnSelector,
   chatGptTurnContainerSelector,
   CHATGPT_ASSISTANT_TURN_SELECTOR,
@@ -1440,6 +1441,7 @@ export interface BrowserTurn {
   retainConversation?: boolean;
   requireRetainedConversation?: boolean;
   conversationKey?: string;
+  projectUrl?: string;
   onPreparedSelected?: (reused: boolean) => void | Promise<void>;
   abortSignal?: AbortSignal;
   onHeartbeat?: () => void;
@@ -2945,13 +2947,14 @@ export class ChatGptBrowserWorker {
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     useSavedChats = false,
     abortSignal?: AbortSignal,
+    projectUrl?: string,
   ): Promise<Locator> {
     throwIfPromptAttachmentAborted(abortSignal);
     // Launcher verification refreshes its owned page before attaching Playwright so a newly added
     // connector is present in the catalog. Navigating again here destroys that freshly hydrated
     // document and made the first verification race a second SPA bootstrap. A leased turn starts on
     // about:blank and therefore still performs exactly one navigation through this same method.
-    const targetUrl = chatGptNewChatUrl(useSavedChats);
+    const targetUrl = projectUrl ? chatGptProjectUrl(projectUrl) : chatGptNewChatUrl(useSavedChats);
     if (page.url() !== targetUrl) {
       await withBrowserTurnAbort(page.goto(targetUrl, {
         waitUntil: "domcontentloaded",
@@ -2969,7 +2972,7 @@ export class ChatGptBrowserWorker {
     await captureDiagnostic?.("composer-ready");
     await throwIfChatGptSessionFailureAlert(page);
     await assertAuthenticatedChatGptPage(page);
-    await assertNewChatPage(page, useSavedChats);
+    await assertNewChatPage(page, useSavedChats, projectUrl);
     await captureDiagnostic?.("session-verified");
     return composer;
   }
@@ -5562,8 +5565,9 @@ export class ChatGptBrowserWorker {
           () => this.prepareChatSurface(
             page,
             checkpoint => diagnostics.capture(page, checkpoint),
-            this.config.useSavedChats,
+            Boolean(turn.projectUrl) || this.config.useSavedChats,
             turn.abortSignal,
+            turn.projectUrl,
           ),
         );
       }
@@ -5788,8 +5792,9 @@ export class ChatGptBrowserWorker {
               await this.prepareChatSurface(
                 page,
                 checkpoint => diagnostics.capture(page, checkpoint),
-                this.config.useSavedChats,
+                Boolean(turn.projectUrl) || this.config.useSavedChats,
                 turn.abortSignal,
+                turn.projectUrl,
               );
               mode = await this.selectModelAndEffort(
                 page,

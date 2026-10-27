@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { resolve } from "node:path";
+import { savedChatProjectForCwd, validateSavedChatProjects } from "./project-routing";
 import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS, isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
 import { estimateTokens } from "../../lib/token-estimate";
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
@@ -380,13 +381,14 @@ export function createChatGptWebAdapter(
   };
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
   const textToolsEnabled = provider.chatgptWeb?.textToolsEnabled === true;
+  const savedChatProjects = validateSavedChatProjects(provider.chatgptWeb?.savedChatProjects);
   // A standalone question with tools explicitly disabled needs no JSON tool envelope.
   const textToolsForRequest = (parsed: CodexParsedRequest) => textToolsEnabled && !(
     !parsed._compactionRequest && parsed.options.toolChoice === "none" && !parsed.context.tools?.length
     && parsed.context.messages.length === 1 && parsed.context.messages[0]?.role === "user"
   );
-  if (textToolsEnabled && (manualInteraction || configuredCapabilities.localToolsEnabled || provider.chatgptWeb?.useSavedChats)) {
-    throw new Error("Text tools require automatic Temporary Chat without the MCP transport");
+  if (textToolsEnabled && (manualInteraction || configuredCapabilities.localToolsEnabled)) {
+    throw new Error("Text tools require automatic browser mode without the MCP transport");
   }
   const freshConversationPerTurn = provider.chatgptWeb?.experimentalFreshConversationPerTurn === true;
   if (provider.chatgptWeb?.experimentalFreshConversationPerTurn !== undefined
@@ -450,6 +452,7 @@ export function createChatGptWebAdapter(
       ? { localTools: true }
       : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
     const identity = extractChatGptTurnIdentity(parsed);
+    const projectUrl = environment ? savedChatProjectForCwd(savedChatProjects, environment.cwd) : undefined;
     const captureLunaCheckpoint = !textTools && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
       && !experimentalBiggerContext
       && !parsed._compactionRequest
@@ -462,7 +465,7 @@ export function createChatGptWebAdapter(
       && (parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID || experimentalBiggerContext)
       && (textTools || mode.localTools || (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && experimentalBiggerContext))
       && retainedLauncherDescriptor
-      ? chatGptConversationKey(checkpointInput.parsed, executionNamespace)
+      ? chatGptConversationKey(checkpointInput.parsed, projectUrl ? `${executionNamespace}:${projectUrl}` : executionNamespace)
       : undefined;
     const previousRuntime = conversationKey ? chatGptTurnSessions.findConversationHead(conversationKey)?.runtime : undefined;
     const previousInput = previousRuntime?.usageInput;
@@ -751,6 +754,7 @@ export function createChatGptWebAdapter(
       };
       const browserTurn = cancellableBrowserTurn(finalizeCheckpoint(worker.run({
         traceId,
+        ...(projectUrl ? { projectUrl } : {}),
         modelId: parsed.modelId,
         reasoning: parsed.options.reasoning,
         ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
@@ -825,6 +829,7 @@ export function createChatGptWebAdapter(
     };
     const browserTurn = cancellableBrowserTurn(trackBrowserOwner(finalizeCheckpoint(worker.run({
       traceId,
+      ...(projectUrl ? { projectUrl } : {}),
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,
       ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
@@ -945,7 +950,7 @@ export function createChatGptWebAdapter(
           return;
         }
         let environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined;
-        if (mode.localTools) {
+        if (mode.localTools || savedChatProjects.length > 0) {
           try {
             environment = environmentStore.resolve(parsed);
           } catch (error) {

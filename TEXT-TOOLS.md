@@ -1,4 +1,4 @@
-# Temporary Chat local tools (local patch for 6.1.13)
+# ChatGPT local tools (local patch for 6.1.13)
 
 `toolTransport: "text"`, `useSavedChats: false`, and `mode: "browser-only"` enable a
 connector-free transport. ChatGPT returns one fenced JSON envelope. The adapter
@@ -23,6 +23,23 @@ platform reserve, then each continuation payload and previous reply. It does not
 reset to the size of the latest tool result or resend the initial schema catalog.
 The launcher helper reports its selected lease after preparing the prompt; usage
 is recomputed on either event so direct and helper execution agree.
+
+Saved project chats are opt-in per local workspace through private `config.json`:
+`savedChatProjects: [{ "root": "<absolute workspace path>", "url": "https://chatgpt.com/g/g-p-<project-id>-<name>/project" }]`.
+Bindings use the verified native working directory, with the closest containing
+root winning. They override Temporary Chat only for that workspace; other tasks
+keep `useSavedChats`. Project chats are saved in ChatGPT history. A fresh epoch
+starts inside the same project and receives the explicit Codex checkpoint; it
+does not depend on project memory reproducing the previous transcript. Existing
+conversation ownership and delta continuation still apply. Invalid URLs and
+redirects to another surface fail before the prompt is sent. Create the project
+in ChatGPT first; this version binds an existing project and does not create one.
+
+The browser copy of each tool result is capped at 12,000 text characters, keeping
+the beginning and end and an explicit omission notice. Image parts, error status,
+native tool results and native history are preserved. Read a narrower file range
+when omitted evidence matters. This reduces context growth; it does not disable
+necessary compaction or increase the model's context window.
 
 Validated on 2026-10-24 at 18:53 local time, installed primary PID 74156:
 `probe-retention.ts` received a tool request, supplied the pure diagnostic result,

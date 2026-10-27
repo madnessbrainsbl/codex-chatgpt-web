@@ -9,6 +9,7 @@ import {
 } from "./chatgpt-web-models";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
+import { validateSavedChatProjects, type SavedChatProject } from "./adapters/chatgpt-web/project-routing";
 
 export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
@@ -122,6 +123,7 @@ export interface AppConfig {
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
   useSavedChats: boolean;
+  savedChatProjects?: SavedChatProject[];
   toolTransport?: "mcp" | "text";
   /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */
   zeroRiskProEnabled: boolean;
@@ -564,11 +566,12 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid useSavedChats in ${path}`);
   }
   const useSavedChats = parsed.useSavedChats !== false;
+  const savedChatProjects = validateSavedChatProjects(parsed.savedChatProjects);
   if (parsed.toolTransport !== undefined && parsed.toolTransport !== "mcp" && parsed.toolTransport !== "text") {
     throw new Error(`Invalid toolTransport in ${path}`);
   }
-  if (parsed.toolTransport === "text" && (browserInteractionMode !== "automatic" || useSavedChats)) {
-    throw new Error("Text tools require automatic mode with Save chats in ChatGPT disabled");
+  if (parsed.toolTransport === "text" && browserInteractionMode !== "automatic") {
+    throw new Error("Text tools require automatic browser mode");
   }
   if (browserInteractionMode === "manual" && experimentalSkillAttachments) {
     throw new Error(`Zero Risk does not support Skills as files in ${path}`);
@@ -598,6 +601,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     experimentalSkillAttachments,
     experimentalFreshConversationPerTurn,
     useSavedChats,
+    savedChatProjects,
     zeroRiskProEnabled,
   } as AppConfig;
 }
@@ -657,6 +661,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       experimentalFreshConversationPerTurn: !manual && config.experimentalFreshConversationPerTurn === true,
       useSavedChats: config.useSavedChats === true,
+      savedChatProjects: config.savedChatProjects,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
     },

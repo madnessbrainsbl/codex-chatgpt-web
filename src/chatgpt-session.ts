@@ -4,6 +4,15 @@ import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 export const CHATGPT_SAVED_CHAT_URL = "https://chatgpt.com/";
 
+export function chatGptProjectUrl(value: string): string {
+  const url = new URL(value);
+  if (url.origin !== "https://chatgpt.com" || url.username || url.password || url.search || url.hash
+    || !/^\/g\/g-p-[a-f0-9]{32}(?:-[A-Za-z0-9_-]+)?\/project$/.test(url.pathname)) {
+    throw new Error("Expected an exact https://chatgpt.com/g/g-p-.../project URL");
+  }
+  return url.href;
+}
+
 export function chatGptNewChatUrl(useSavedChats = false): string {
   return useSavedChats ? CHATGPT_SAVED_CHAT_URL : CHATGPT_TEMPORARY_CHAT_URL;
 }
@@ -301,9 +310,10 @@ export async function assertTemporaryChatPage(page: Page): Promise<void> {
   await assertNewChatPage(page);
 }
 
-export async function assertNewChatPage(page: Page, useSavedChats = false): Promise<void> {
+export async function assertNewChatPage(page: Page, useSavedChats = false, projectUrl?: string): Promise<void> {
   const url = new URL(page.url());
-  const expected = new URL(chatGptNewChatUrl(useSavedChats));
+  if (projectUrl && !useSavedChats) throw new Error("ChatGPT projects require saved chats");
+  const expected = new URL(projectUrl ? chatGptProjectUrl(projectUrl) : chatGptNewChatUrl(useSavedChats));
   if (url.origin !== expected.origin || url.pathname !== expected.pathname
     || (url.searchParams.get("temporary-chat") === "true") === useSavedChats) {
     throw new Error(`ChatGPT left the requested new ${useSavedChats ? "saved" : "Temporary"} Chat surface (${page.url()})`);

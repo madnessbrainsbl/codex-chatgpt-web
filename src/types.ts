@@ -315,5 +315,7 @@ export interface CodexProviderConfig {
     experimentalFreshConversationPerTurn?: boolean;
     /** Use ordinary ChatGPT history for task conversations. Default: Temporary Chat. */
     useSavedChats?: boolean;
+    /** Explicit local workspace bindings; these task chats are saved inside the selected project. */
+    savedChatProjects?: { root: string; url: string }[];
   };
 }
