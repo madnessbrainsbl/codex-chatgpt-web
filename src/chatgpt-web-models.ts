@@ -45,6 +45,9 @@ export const CHATGPT_WEB_INSTANT_COMPOSER_CHAR_LIMIT = 211_256;
 // model; 530,000 were rejected with message_length_exceeds_limit even at 67k
 // tokens. Keep headroom below that independent server boundary.
 export const CHATGPT_WEB_MEDIUM_HIGH_COMPOSER_CHAR_LIMIT = 500_000;
+// Plus rejected a 264,021-character High message on 2026-10-27 despite spare context.
+// Keep individual uploads below that observed rejection; the total context window is unchanged.
+export const CHATGPT_WEB_PLUS_REASONING_COMPOSER_CHAR_LIMIT = 200_000;
 /** Hidden ChatGPT product prompt and Codex Native schema reserve included in usage estimates. */
 export const CHATGPT_WEB_PLATFORM_RESERVE_TOKENS = 8_192;
 /** Reserve for each attachment in the final browser message; inert stages carry no images. */
@@ -231,7 +234,7 @@ export function resolveChatGptWebTransportLimits(
       return { browserComposerCharLimit: CHATGPT_WEB_INSTANT_COMPOSER_CHAR_LIMIT };
     }
     if (effort === "medium" || effort === "high" || (effort === "xhigh" && capabilities.extraHighAvailable)) {
-      return { browserComposerCharLimit: CHATGPT_WEB_MEDIUM_HIGH_COMPOSER_CHAR_LIMIT };
+      return { browserComposerCharLimit: CHATGPT_WEB_PLUS_REASONING_COMPOSER_CHAR_LIMIT };
     }
     throw new Error(`ChatGPT Plus transport limit is not defined for unavailable effort: ${effort}`);
   }

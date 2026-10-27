@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { multipartRecords } from "./fixtures/multipart-records";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
@@ -2986,7 +2987,7 @@ test("only a size rejection of the current owned browser submission is non-retry
   expect(rejected).toEqual([]);
   const current = makeRequest(); page.emit("request", current); respond(current);
   expect(await observer.failure()).toMatchObject({
-    status: 400, code: "context_length_exceeded", errorType: "invalid_request_error", retryable: false,
+    status: 413, code: "message_length_exceeds_limit", errorType: "invalid_request_error", retryable: false,
   });
   expect(rejected).toHaveLength(1);
   observer.begin(page as unknown as Page);
@@ -3050,7 +3051,7 @@ test("completed SSE size errors reject only their current submission, not model 
   expect(rejected).toHaveLength(0);
   // Use actual SSE framing, including CRLF and a multiline data event.
   page.emit("requestfinished", stream(`event: message\r\ndata: ${JSON.stringify(error, null, 2).replaceAll("\n", "\r\ndata: ")}\r\n\r\ndata: [DONE]\r\n\r\n`));
-  expect(await observer.failure()).toMatchObject({ code: "context_length_exceeded", retryable: false });
+  expect(await observer.failure()).toMatchObject({ code: "message_length_exceeds_limit", retryable: false });
   expect(rejected).toHaveLength(1);
   let finish!: (body: string) => void;
   page.emit("requestfinished", stream(new Promise<string>(resolve => { finish = resolve; })));
@@ -3524,7 +3525,7 @@ test("browser preflight separates model context from one-message transport limit
       "gpt-5.6-sol",
       effort,
       plus,
-      500_000,
+      200_000,
     )).not.toThrow();
     expect(() => assertChatGptWebInputWithinLimits(
       1,
@@ -3532,8 +3533,8 @@ test("browser preflight separates model context from one-message transport limit
       "gpt-5.6-sol",
       effort,
       plus,
-      500_001,
-    )).toThrow("500,000-character ChatGPT composer boundary");
+      200_001,
+    )).toThrow("200,000-character ChatGPT composer boundary");
   }
 
   expect(() => assertChatGptWebInputWithinLimits(
@@ -3616,7 +3617,7 @@ test("Bigger Context fits mixed-density whole records within both token and comp
   const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false, experimentalBiggerContext: true };
   const dense = "a!b@c#d$e%f^g&h*".repeat(3_750);
   const sparse = "x".repeat(dense.length);
-  const whitespace = " ".repeat(450_000);
+  const whitespace = " ".repeat(160_000);
   // Equal byte sizes must not pack two dense records into one oversized stage. Conversely,
   // token-only balancing must not leave all the low-token whitespace in one oversized composer.
   for (const contents of [
@@ -3634,7 +3635,7 @@ test("Bigger Context fits mixed-density whole records within both token and comp
       },
     }, capabilities, undefined, { experimentalMultipartParts: 6 });
     const multipart = compiled.multipart!;
-    const records = multipart.parts.flatMap(part => JSON.parse(part).records);
+    const records = multipartRecords(multipart.parts);
     expect(records).toEqual(contents.map((content, message_index) => ({
       kind: "message", message_index, message: { role: "user", content },
     })));
@@ -3716,7 +3717,7 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     plus,
-    500_000,
+    200_000,
     6,
   )).not.toThrow();
   expect(() => assertChatGptWebMultipartInputWithinLimits(
@@ -3725,7 +3726,7 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     plus,
-    500_000,
+    200_000,
     6,
   )).toThrow("270,000-token six-part ceiling");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
@@ -3734,7 +3735,7 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     plus,
-    500_000,
+    200_000,
     2,
   )).toThrow("180,000-token two-part ceiling");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
@@ -3764,17 +3765,17 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 23_807, 200_000).effort).toBe("low");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 23_808, 200_000).effort).toBe("medium");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 30_000, 200_000).effort).toBe("medium");
-  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 30_000, 300_000).effort).toBe("medium");
-  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 80_000, 300_000).effort).toBe("medium");
+  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 80_000, 200_000).effort).toBe("medium");
+  expect(() => resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 30_000, 264_021)).toThrow("No ChatGPT effort");
   // The same text must have the same available input budget inline, staged or in the final part.
   // 80k is the early compaction trigger; the remaining input budget includes an 8192-token reserve.
-  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 80_169, 276_680).effort).toBe("medium");
+  expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, 80_169, 200_000).effort).toBe("medium");
   for (const tokens of [81_807, 81_808]) {
-    const inline = () => assertChatGptWebInputWithinLimits(tokens + 8_192, tokens, "gpt-5.6-sol", "high", plus, 300_000);
-    const stage = () => resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, tokens, 300_000);
+    const inline = () => assertChatGptWebInputWithinLimits(tokens + 8_192, tokens, "gpt-5.6-sol", "high", plus, 200_000);
+    const stage = () => resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, tokens, 200_000);
     const final = () => assertChatGptWebMultipartInputWithinLimits(
-      tokens + 10_000, tokens, "gpt-5.6-sol", "high", plus, 300_000, 6,
-      { stagingEffort: "medium", maxStageMessageTokens: 500, maxStageChars: 2_000, finalMessageTokens: tokens, finalMessageChars: 300_000 },
+      tokens + 10_000, tokens, "gpt-5.6-sol", "high", plus, 200_000, 6,
+      { stagingEffort: "medium", maxStageMessageTokens: 500, maxStageChars: 2_000, finalMessageTokens: tokens, finalMessageChars: 200_000 },
     );
     for (const preflight of [inline, stage, final]) {
       if (tokens === 81_807) expect(preflight).not.toThrow();
@@ -3807,7 +3808,7 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
     {
       stagingEffort: "medium",
       maxStageMessageTokens: 30_000,
-      maxStageChars: 300_000,
+      maxStageChars: 200_000,
       finalMessageTokens: 1_000,
       finalMessageChars: 4_000,
     },

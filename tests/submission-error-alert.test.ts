@@ -17,7 +17,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a new service size alert sur
     await page.evaluate(text => {
       document.querySelector("main")!.innerHTML = `<aside role="alert">${text}</aside>`;
     }, tooLong);
-    expect(await observer.failure()).toMatchObject({ code: "context_length_exceeded", retryable: false });
+    expect(await observer.failure()).toMatchObject({ code: "message_length_exceeds_limit", retryable: false });
   } finally { observer.dispose(); await browser.close(); }
 }, 20_000);
 
@@ -59,7 +59,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("size alerts require a curren
     }
     expect(failures).toHaveLength(0);
     await page.evaluate(text => { document.querySelector("#variant")!.innerHTML = `<aside role="alert">${text}</aside>`; }, tooLong);
-    expect(await observer.failure()).toMatchObject({ status: 400, code: "context_length_exceeded", retryable: false });
+    expect(await observer.failure()).toMatchObject({ status: 413, code: "message_length_exceeds_limit", retryable: false });
     await observer.failure();
     expect(failures).toHaveLength(1);
     // The next multipart Send records the existing alert as stale and resets the failure.

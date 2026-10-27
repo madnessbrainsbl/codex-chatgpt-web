@@ -357,7 +357,7 @@ test("a compaction checkpoint replaces covered user history in the browser, pres
   expect(estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId)).toBeLessThan(15000);
 });
 
-test.each(["direct", "helper"])("%s: text tools retain one Temporary Chat and count its transcript", async transport => {
+test.each(["direct", "helper", "multipart"])("%s: text tools retain one chat and count its transcript", async transport => {
   const keys: string[] = [];
   const prompts: string[] = [];
   const sizes: number[] = [];
@@ -371,8 +371,9 @@ test.each(["direct", "helper"])("%s: text tools retain one Temporary Chat and co
       const reused = prompts.length > 0;
       if (transport === "direct") await turn.onPreparedSelected?.(reused);
       const compiled = await (prompts.length ? turn.prepareResume() : turn.prepare());
-      if (transport === "helper") await turn.onPreparedSelected?.(reused);
-      prompts.push(compiled.text);
+      if (transport !== "direct") await turn.onPreparedSelected?.(reused);
+      if (transport === "multipart" && prompts.length < 2) expect(compiled.multipart?.parts.length).toBe(reused ? undefined : 2);
+      prompts.push(compiledChatGptWebMessages(compiled).join("\n"));
       sizes.push(estimateCompiledChatGptWebInputTokens(compiled, turn.modelId));
       const answer = prompts.length === 1
         ? '{"kind":"tool","name":"functions__exec_command","arguments":{"cmd":"pwd"}}'
@@ -383,10 +384,12 @@ test.each(["direct", "helper"])("%s: text tools retain one Temporary Chat and co
   } as any);
   try {
     const parsed = request();
-    parsed.context.systemPrompt = ["Unique original system instruction"];
+    parsed.context.systemPrompt = ["Unique original system instruction" + (transport === "multipart" ? "word ".repeat(52_000) : "")];
+    if (transport === "multipart") parsed._chatgptModelFamily = "6";
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `retention-test://${randomUUID()}`,
       chatgptWeb: { browserHost: "launcher", browserHostDescriptorPath: "synthetic-descriptor.json",
-        textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true } });
+        textToolsEnabled: true, localToolsEnabled: false, useSavedChats: transport === "multipart", solAvailable: true,
+        experimentalBiggerContext: transport === "multipart" } });
     const first: AdapterEvent[] = [];
     await adapter.runTurn(parsed, { headers: new Headers() }, e => first.push(e));
     const call = first.find(e => e.type === "tool_call_start");
@@ -428,7 +431,7 @@ test.each(["direct", "helper"])("%s: text tools retain one Temporary Chat and co
     expect(prompts[3]).toContain("Inspect the actual local process now");
     expect(prompts[3]).not.toContain("New user instruction");
   } finally { spy.mockRestore(); }
-});
+}, 20_000);
 
 test("an upload quota is replayed as a terminal error without another browser attempt", async () => {
   let sends = 0;
@@ -465,7 +468,7 @@ test("text tool schemas count toward multipart planning and native auto-compacti
   }));
   parsed.context.tools![0]!.description = "schema documentation ".repeat(20_000);
   const caps = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false };
-  expect(resolveBiggerContextMultipartParts(parsed, caps)).toBeUndefined();
+  expect(resolveBiggerContextMultipartParts(parsed, caps)).toBe(2);
   const parts = resolveBiggerContextMultipartParts(parsed, caps, false, undefined, true);
   expect(parts).toBeDefined();
   const compiled = compileChatGptWebPrompt(parsed, caps, undefined, { textTools: true, experimentalMultipartParts: parts });

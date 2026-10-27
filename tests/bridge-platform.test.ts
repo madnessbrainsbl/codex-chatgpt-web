@@ -29,6 +29,17 @@ test("Responses SSE completes through the Windows push stream", async () => {
   expect(body).toEndWith("data: [DONE]\n\n");
 });
 
+test("a rejected single upload is not reported as an exhausted context window", async () => {
+  async function* events(): AsyncGenerator<AdapterEvent> {
+    yield { type: "error", message: "ChatGPT rejected this single message as too long.", status: 413,
+      errorType: "invalid_request_error", code: "message_length_exceeds_limit", retryable: false };
+  }
+  const body = await new Response(bridgeToResponsesSSE(events(), "chatgpt-web/test")).text();
+  expect(body).toContain('"code":"message_length_exceeds_limit"');
+  expect(body).not.toContain("context_length_exceeded");
+  expect(body).toContain("response.failed");
+});
+
 test("Darwin SSE remains decodable through Bun.serve under sustained chunking", async () => {
   const server = Bun.serve({
     port: 0,

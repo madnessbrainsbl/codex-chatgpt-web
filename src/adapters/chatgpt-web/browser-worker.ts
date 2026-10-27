@@ -929,8 +929,8 @@ export class ChatGptSubmissionRejectionObserver {
 
   private sizeError(): ChatGptWebAdapterError {
     return new ChatGptWebAdapterError(
-      "ChatGPT rejected this message because it exceeds the selected mode's input-size limit. Reduce the context or compact with another model before retrying.",
-      { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+      "ChatGPT rejected this single message as too long. This is a per-message upload limit; it does not establish that the conversation is full. Split the message into smaller parts before retrying.",
+      { status: 413, errorType: "invalid_request_error", code: "message_length_exceeds_limit", retryable: false },
     );
   }
 

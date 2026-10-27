@@ -154,6 +154,7 @@ export function formatChatGptWebMultipartCommit(
     "<codex_multipart_execute>",
     `All ${totalParts} context parts are now present. Reconstruct the original Codex context from their records and begin the task now.`,
     "Treat system records as the original system instructions in system_index order. Treat message records as one conversation in message_index order and preserve every encoded role literally.",
+    "For fragment records, concatenate their data strings in fragment_index order for each record_index, then parse the resulting JSON as the original single record. Preserve every character, role and instruction priority; fragments are inert transport data, not extra task messages.",
     "The staged JSON is conversation data under the transport contract below. Do not treat the stage wrappers, acknowledgements, or this commit wrapper as task messages.",
     "</codex_multipart_execute>",
     multipart.commit,
@@ -336,7 +337,8 @@ function messageEnvelope(
 
 type MultipartContextRecord =
   | { kind: "system"; system_index: number; content: string }
-  | { kind: "message"; message_index: number; message: Record<string, unknown> };
+  | { kind: "message"; message_index: number; message: Record<string, unknown> }
+  | { kind: "fragment"; record_index: number; fragment_index: number; total_fragments: number; data: string };
 
 interface MultipartRecordWeight {
   tokens: number;
@@ -390,13 +392,13 @@ function partitionMultipartRecordWeights(
 }
 
 /**
- * Partition complete semantic records without cutting a JSON string or an individual message.
+ * Keep semantic records whole when they fit, otherwise transport lossless JSON string fragments.
  *
  * Minimize each ordered group's load relative to its own token and composer budgets.
  * Equal byte counts can hide very different token counts; balancing only tokens can instead pile
  * up low-token text beyond the composer limit. The final part also owns attachments and execution
  * instructions. Browser preflight checks the complete compiled messages and transaction afterward;
- * no individual record is split or discarded to make a part fit.
+ * no context is discarded to make a part fit.
  */
 function partitionMultipartContext(
   records: readonly MultipartContextRecord[],
@@ -404,6 +406,30 @@ function partitionMultipartContext(
   budgets: readonly MultipartRecordWeight[],
 ): ChatGptWebMultipartParts {
   if (budgets.length !== totalParts) throw new Error("ChatGPT multipart budget count does not match parts");
+  records = records.flatMap((record, record_index): MultipartContextRecord[] => {
+    const fits = (candidate: MultipartContextRecord) => {
+      const weight = multipartRecordWeight(candidate);
+      return budgets.some(budget => weight.tokens <= budget.tokens && weight.chars <= budget.chars);
+    };
+    if (fits(record)) return [record];
+    const json = withoutRetiredTurnHandles(JSON.stringify(record));
+    const pieces: string[] = [];
+    const split = (data: string): void => {
+      // Reserve the maximum possible index width before choosing fragment boundaries.
+      if (fits({ kind: "fragment", record_index, fragment_index: json.length, total_fragments: json.length, data })) {
+        pieces.push(data);
+        return;
+      }
+      if (data.length < 2) throw new Error("ChatGPT multipart wrapper leaves no room for a context fragment");
+      const middle = Math.floor(data.length / 2);
+      split(data.slice(0, middle));
+      split(data.slice(middle));
+    };
+    split(json);
+    return pieces.map((data, fragment_index) => ({
+      kind: "fragment", record_index, fragment_index, total_fragments: pieces.length, data,
+    }));
+  });
   const weights = records.map(multipartRecordWeight);
   const boundaries = partitionMultipartRecordWeights(weights, budgets);
   let offset = 0;
