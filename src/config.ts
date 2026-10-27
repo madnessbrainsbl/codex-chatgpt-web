@@ -10,6 +10,7 @@ import {
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
 import { validateSavedChatProjects, type SavedChatProject } from "./adapters/chatgpt-web/project-routing";
+import { getCodexHome } from "./codex-integration-shared";
 
 export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
@@ -124,6 +125,7 @@ export interface AppConfig {
   experimentalFreshConversationPerTurn: boolean;
   useSavedChats: boolean;
   savedChatProjects?: SavedChatProject[];
+  projectChatRouting?: boolean;
   toolTransport?: "mcp" | "text";
   /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */
   zeroRiskProEnabled: boolean;
@@ -561,12 +563,18 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && typeof parsed.experimentalFreshConversationPerTurn !== "boolean") {
     throw new Error(`Invalid experimentalFreshConversationPerTurn in ${path}`);
   }
-  const experimentalFreshConversationPerTurn = parsed.experimentalFreshConversationPerTurn === true;
+  const experimentalFreshConversationPerTurn = parsed.projectChatRouting !== true && parsed.experimentalFreshConversationPerTurn === true;
   if (parsed.useSavedChats !== undefined && typeof parsed.useSavedChats !== "boolean") {
     throw new Error(`Invalid useSavedChats in ${path}`);
   }
-  const useSavedChats = parsed.useSavedChats !== false;
+  const useSavedChats = parsed.projectChatRouting === true || parsed.useSavedChats !== false;
   const savedChatProjects = validateSavedChatProjects(parsed.savedChatProjects);
+  if (parsed.projectChatRouting !== undefined && typeof parsed.projectChatRouting !== "boolean") {
+    throw new Error(`Invalid projectChatRouting in ${path}`);
+  }
+  if (parsed.projectChatRouting && browserInteractionMode !== "automatic") {
+    throw new Error("Project chat routing requires automatic browser mode");
+  }
   if (parsed.toolTransport !== undefined && parsed.toolTransport !== "mcp" && parsed.toolTransport !== "text") {
     throw new Error(`Invalid toolTransport in ${path}`);
   }
@@ -662,6 +670,9 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       experimentalFreshConversationPerTurn: !manual && config.experimentalFreshConversationPerTurn === true,
       useSavedChats: config.useSavedChats === true,
       savedChatProjects: config.savedChatProjects,
+      projectChatRouting: config.projectChatRouting === true,
+      projectRoutingConfigPath: getConfigPath(),
+      nativeProjectStatePath: join(getCodexHome(), ".codex-global-state.json"),
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
     },

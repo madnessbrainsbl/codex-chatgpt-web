@@ -267,6 +267,12 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     && typeof config.experimentalFreshConversationPerTurn !== "boolean") {
     throw new Error("Runtime configuration has an invalid experimentalFreshConversationPerTurn");
   }
+  if (config.projectChatRouting !== undefined && typeof config.projectChatRouting !== "boolean") {
+    throw new Error("Runtime configuration has an invalid projectChatRouting");
+  }
+  if (config.projectChatRouting && config.browserInteractionMode === "manual") {
+    throw new Error("Project chat routing requires automatic browser mode");
+  }
   if (config.stallTimeoutSec !== undefined
     && (!Number.isFinite(config.stallTimeoutSec) || config.stallTimeoutSec <= 0)) {
     throw new Error("Runtime configuration has an invalid stallTimeoutSec");
@@ -320,7 +326,7 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
       throw new Error("Active browser interaction mode does not match the active tunnel");
     }
   }
-  return config;
+  return config.projectChatRouting ? { ...config, useSavedChats: true, experimentalFreshConversationPerTurn: false } : config;
 }
 
 class RuntimeSupervisor {

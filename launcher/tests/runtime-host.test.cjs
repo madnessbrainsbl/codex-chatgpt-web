@@ -32,6 +32,13 @@ function hostFor(existingConfig, interactionMode = "automatic") {
   return { host, invocation: () => invocation };
 }
 
+test("project routing rejects settings that would create Temporary or per-turn chats", async () => {
+  const fixture = hostFor({ mode: "browser-only", browserInteractionMode: "automatic", projectChatRouting: true });
+  await assert.rejects(() => fixture.host.setUseSavedChats(false), /requires saved/);
+  await assert.rejects(() => fixture.host.setFreshConversationPerTurn(true), /same saved chat/);
+  assert.equal(fixture.invocation(), undefined);
+});
+
 function devHostFor(existingConfig, interactionMode = "automatic") {
   const host = new RuntimeHost({
     app: {

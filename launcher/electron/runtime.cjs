@@ -1249,6 +1249,7 @@ class RuntimeHost {
   async setFreshConversationPerTurn(enabled) {
     if (typeof enabled !== "boolean") throw new Error("Fresh conversation preference must be a boolean");
     const current = this.runtimeConfigSnapshot();
+    if (current.config?.projectChatRouting && enabled) throw new Error("Project chat routing keeps the same saved chat until context rollover");
     if (!current.configured) throw new Error("Initialize the runtime before changing browser conversation retention");
     if ((current.config?.browserInteractionMode ?? "automatic") !== "automatic") {
       throw new Error("New browser chats per turn are unavailable in Zero Risk mode");
@@ -1278,6 +1279,7 @@ class RuntimeHost {
   async setUseSavedChats(enabled) {
     if (typeof enabled !== "boolean") throw new Error("Saved chat preference must be a boolean");
     const current = this.runtimeConfigSnapshot();
+    if (current.config?.projectChatRouting && !enabled) throw new Error("Project chat routing requires saved ChatGPT conversations");
     if (!current.configured) throw new Error("Initialize the runtime before changing saved chats");
     const development = this.launcherProfile === "development";
     const args = [

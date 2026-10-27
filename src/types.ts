@@ -317,5 +317,8 @@ export interface CodexProviderConfig {
     useSavedChats?: boolean;
     /** Explicit local workspace bindings; these task chats are saved inside the selected project. */
     savedChatProjects?: { root: string; url: string }[];
+    projectChatRouting?: boolean;
+    projectRoutingConfigPath?: string;
+    nativeProjectStatePath?: string;
   };
 }

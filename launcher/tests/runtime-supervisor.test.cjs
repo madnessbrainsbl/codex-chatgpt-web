@@ -68,6 +68,16 @@ function launcherConfig(descriptorPath, overrides = {}) {
   };
 }
 
+test("project routing exposes saved retained chats without rewriting the private legacy preferences", () => {
+  const descriptor = path.join(os.tmpdir(), "project-routing-launcher.json");
+  const input = launcherConfig(descriptor, { projectChatRouting: true, useSavedChats: false, experimentalFreshConversationPerTurn: true });
+  const normalized = validateConfig(input, descriptor);
+  assert.equal(normalized.useSavedChats, true);
+  assert.equal(normalized.experimentalFreshConversationPerTurn, false);
+  assert.equal(input.useSavedChats, false);
+  assert.throws(() => validateConfig({ ...input, projectChatRouting: "true" }, descriptor), /invalid projectChatRouting/);
+});
+
 test("packaged runtime paths are native on Windows and Unix", () => {
   const windows = packagedRuntimePaths("C:\\Program Files\\Codex\\resources", "win32");
   assert.equal(path.basename(windows.executable), "bun.exe");

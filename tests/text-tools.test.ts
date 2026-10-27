@@ -90,7 +90,7 @@ test("a trusted workspace routes to its saved project while other workspaces kee
   } finally { browser.mockRestore(); environment.mockRestore(); }
 });
 
-test("project checkpoint uses the existing chat and only its unseen suffix before rollover", async () => {
+test.each(["project", "standalone"])("%s checkpoint uses the existing chat and only its unseen suffix before rollover", async scope => {
   const release = spyOn(launcherHost, "releaseLauncherRetainedConversation").mockResolvedValue(0);
   const root = resolve("test-workspaces", "checkpoint");
   const projectUrl = "https://chatgpt.com/g/g-p-0123456789abcdef0123456789abcdef-demo/project";
@@ -102,7 +102,7 @@ test("project checkpoint uses the existing chat and only its unseen suffix befor
   const browser = spyOn(ChatGptBrowserWorker, "forProvider").mockReturnValue({ appName: "Codex Native2",
     async run(turn: any) {
       keys.push(turn.conversationKey);
-      expect(turn.projectUrl).toBe(projectUrl);
+      expect(turn.projectUrl).toBe(scope === "project" ? projectUrl : undefined);
       const reused = keys.length === 2;
       const compiled = await (reused ? turn.prepareResume() : turn.prepare());
       if (turn.compaction) expect(compiled.multipart).toBeUndefined();
@@ -116,8 +116,8 @@ test("project checkpoint uses the existing chat and only its unseen suffix befor
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `project-checkpoint://${randomUUID()}`,
       chatgptWeb: { browserHost: "launcher", browserHostDescriptorPath: "synthetic-project-descriptor.json",
         experimentalBiggerContext: true,
-        textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true,
-        savedChatProjects: [{ root, url: projectUrl }] } });
+        textToolsEnabled: true, localToolsEnabled: false, useSavedChats: scope === "standalone", solAvailable: true,
+        savedChatProjects: scope === "project" ? [{ root, url: projectUrl }] : [] } });
     const parsed = request();
     parsed.context.messages[0]!.content = "UNIQUE_INITIAL_PROJECT_CONTEXT";
     await adapter.runTurn(parsed, { headers: new Headers() }, () => {});

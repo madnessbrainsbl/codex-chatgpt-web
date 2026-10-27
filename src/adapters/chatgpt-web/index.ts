@@ -1,10 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import { resolve } from "node:path";
-import { savedChatProjectForCwd, validateSavedChatProjects } from "./project-routing";
+import { join, resolve } from "node:path";
+import { savedChatProjectForCwd, validateSavedChatProjects, readCodexChatProject, readSavedChatProjects, saveChatProjectBinding, projectSetupQuestion, projectSetupReply } from "./project-routing";
+import { getCodexHome } from "../../codex-integration-shared";
 import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS, isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
 import { estimateTokens } from "../../lib/token-estimate";
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
-import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
+import { defaultBrokerEndpoint, expandUserPath, getConfigPath, resolveBrokerEndpoint } from "../../config";
 import {
   cancelLauncherManualTurn,
   endLauncherManualTurn,
@@ -357,6 +358,11 @@ export function createChatGptWebAdapter(
     zeroRiskManualControl?: ChatGptZeroRiskManualControl;
   } = {},
 ): ProviderAdapter {
+  const projectChatRouting = provider.chatgptWeb?.projectChatRouting === true;
+  if (projectChatRouting) {
+    provider = { ...provider, chatgptWeb: { ...provider.chatgptWeb, useSavedChats: true, experimentalFreshConversationPerTurn: false } };
+  }
+  const savedChats = provider.chatgptWeb?.useSavedChats === true;
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = dependencies.broker ?? TurnBroker.forSocket(brokerSocketPath(provider));
   const zeroRiskManualControl = dependencies.zeroRiskManualControl ?? launcherZeroRiskManualControl;
@@ -438,6 +444,7 @@ export function createChatGptWebAdapter(
         part?: number,
       ) => void;
     } = {},
+    routing?: { projectUrl?: string; setupCompleted?: boolean },
   ): ChatGptTurnRuntime => {
     const textTools = textToolsForRequest(parsed);
     const manualRequest = isChatGptWebZeroRiskBackendModel(parsed.modelId);
@@ -452,7 +459,7 @@ export function createChatGptWebAdapter(
       ? { localTools: true }
       : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
     const identity = extractChatGptTurnIdentity(parsed);
-    const projectUrl = environment ? savedChatProjectForCwd(savedChatProjects, environment.cwd) : undefined;
+    const projectUrl = routing ? routing.projectUrl : environment ? savedChatProjectForCwd(savedChatProjects, environment.cwd) : undefined;
     const captureLunaCheckpoint = !textTools && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
       && !experimentalBiggerContext
       && !parsed._compactionRequest
@@ -460,7 +467,7 @@ export function createChatGptWebAdapter(
     const checkpointInput = captureLunaCheckpoint
       ? lunaCheckpointStore.apply(parsed)
       : { parsed, applied: false };
-    let conversationKey = (!parsed._compactionRequest || (textTools && projectUrl))
+    let conversationKey = (!parsed._compactionRequest || (textTools && (projectUrl || savedChats)))
       && !freshConversationPerTurn
       && (parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID || experimentalBiggerContext)
       && (textTools || mode.localTools || (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && experimentalBiggerContext))
@@ -473,9 +480,9 @@ export function createChatGptWebAdapter(
       ? textTools && previousInput ? textToolResumeRequest(checkpointInput.parsed, previousInput)
         : retainedConversationResumeRequest(checkpointInput.parsed)
       : undefined;
-    const projectCheckpointInPlace = Boolean(parsed._compactionRequest && projectUrl && previousInput
+    const savedCheckpointInPlace = Boolean(parsed._compactionRequest && (projectUrl || savedChats) && previousInput
       && resumeInput && resumeInput !== checkpointInput.parsed);
-    if (parsed._compactionRequest && !projectCheckpointInPlace) {
+    if (parsed._compactionRequest && !savedCheckpointInPlace) {
       conversationKey = undefined;
       resumeInput = undefined;
     }
@@ -490,12 +497,13 @@ export function createChatGptWebAdapter(
       : undefined;
     const compileOptionsFor = (input: CodexParsedRequest) => {
       if (manualRequest) return {};
-      const experimentalMultipartParts = experimentalBiggerContext && !projectCheckpointInPlace
+      const experimentalMultipartParts = experimentalBiggerContext && !savedCheckpointInPlace
         ? resolveBiggerContextMultipartParts(input, turnCapabilities, experimentalSkillAttachments, worker.appName, textTools)
         : undefined;
       return {
         appName: worker.appName,
         textTools,
+        projectSetupCompleted: routing?.setupCompleted === true && !input._compactionRequest,
         textToolContinuation: input === resumeInput && textToolContinuation,
         captureLunaCheckpoint,
         experimentalSkillAttachments,
@@ -783,8 +791,8 @@ export function createChatGptWebAdapter(
         } : {}),
       })).then(async answer => {
         if (textToolContextTokens !== undefined) textToolContextTokens += estimateTokens(answer, parsed.modelId);
-        // The checkpoint closes a full epoch, but is generated in its owned project chat first.
-        if (projectCheckpointInPlace) await releaseRetainedConversation?.();
+        // The checkpoint closes a full epoch, but is generated in its owned saved chat first.
+        if (savedCheckpointInPlace) await releaseRetainedConversation?.();
         return answer;
       }), browserAbort);
       return {
@@ -958,7 +966,7 @@ export function createChatGptWebAdapter(
           return;
         }
         let environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined;
-        if (mode.localTools || savedChatProjects.length > 0) {
+        if (mode.localTools || savedChatProjects.length > 0 || projectChatRouting) {
           try {
             environment = environmentStore.resolve(parsed);
           } catch (error) {
@@ -967,6 +975,41 @@ export function createChatGptWebAdapter(
               `[chatgpt-web] trusted environment unavailable (thread_id=${identity.threadId ? "present" : "missing"}, turn_id=${identity.turnId ? "present" : "missing"}, previous_response_id=${parsed.previousResponseId ?? "none"}, replay_prefix_items=${parsed._replayPrefixLen ?? 0}, context_messages=${parsed.context.messages.length})`,
             );
             throw error;
+          }
+        }
+        let routing: { projectUrl?: string; setupCompleted?: boolean } | undefined;
+        if (projectChatRouting) {
+          if (!environment) throw new Error("Project chat routing requires the verified native environment");
+          const identity = extractChatGptTurnIdentity(parsed);
+          if (!identity.threadId) throw new Error("Project chat routing requires native thread identity");
+          const project = readCodexChatProject(provider.chatgptWeb?.nativeProjectStatePath
+            ?? join(getCodexHome(), ".codex-global-state.json"), identity.threadId, environment.cwd);
+          routing = {};
+          if (project) {
+            const configPath = provider.chatgptWeb?.projectRoutingConfigPath ?? getConfigPath();
+            routing.projectUrl = project.url ?? savedChatProjectForCwd(readSavedChatProjects(configPath), project.root);
+            const question = projectSetupQuestion(project);
+            const text = (message: typeof parsed.context.messages[number] | undefined): string => !message ? ""
+              : typeof message.content === "string" ? message.content
+                : message.content.flatMap(part => part.type === "text" ? [part.text] : []).join("");
+            const lastUser = parsed.context.messages.findLast(message => message.role === "user" && message.origin !== "codex_skill");
+            const lastAssistant = parsed.context.messages.findLast(message => message.role === "assistant");
+            const reply = text(lastAssistant) === question ? projectSetupReply(text(lastUser)) : undefined;
+            if (reply && reply === routing.projectUrl) routing.setupCompleted = true;
+            if (!routing.projectUrl) {
+              if (reply && !parsed._compactionRequest) {
+                saveChatProjectBinding(configPath, project.root, reply);
+                routing = { projectUrl: reply, setupCompleted: true };
+              } else {
+                if (parsed._compactionRequest) {
+                  emit({ type: "error", message: question, status: 409, errorType: "invalid_request_error", code: "chatgpt_project_required", retryable: false });
+                } else {
+                  emit({ type: "text_delta", text: question, phase: "final_answer" });
+                  emit({ type: "done", stopReason: "stop", endTurn: true, usage: { inputTokens: 0, outputTokens: 0 } });
+                }
+                return;
+              }
+            }
           }
         }
         if (parsed._compactionRequest) {
@@ -1088,6 +1131,7 @@ export function createChatGptWebAdapter(
                       freshCompactionTraceId,
                       turnCapabilities,
                       { onCompactionProgress: armHandoffDeadline },
+                      routing,
                     );
                     retainOwnershipUntil(fallbackRuntime.physicalSettlement);
                     try {
@@ -1284,10 +1328,10 @@ export function createChatGptWebAdapter(
             return;
           }
           const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
-          const projectUrl = environment ? savedChatProjectForCwd(savedChatProjects, environment.cwd) : undefined;
+          const projectUrl = routing ? routing.projectUrl : environment ? savedChatProjectForCwd(savedChatProjects, environment.cwd) : undefined;
           const sourceConversationKey = chatGptConversationKey(parsed, projectUrl ? `${executionNamespace}:${projectUrl}` : executionNamespace);
           const source = sourceConversationKey ? chatGptTurnSessions.findConversationHead(sourceConversationKey) : undefined;
-          const checkpointInPlace = Boolean(projectUrl && textTools && source?.runtime.usageInput
+          const checkpointInPlace = Boolean((projectUrl || savedChats) && textTools && source?.runtime.usageInput
             && textToolResumeRequest(parsed, source.runtime.usageInput) !== parsed);
           if (!checkpointInPlace) {
             if (sourceConversationKey && source) {
@@ -1310,7 +1354,7 @@ export function createChatGptWebAdapter(
         const session = await chatGptTurnSessions.getOrCreateAfterOwnerRetirement(
           executionKey,
           ownerKey,
-          () => startRuntime(parsed, environment, traceId, turnCapabilities),
+          () => startRuntime(parsed, environment, traceId, turnCapabilities, {}, routing),
           traceId,
           incoming.abortSignal,
           nativeTurnId,
