@@ -460,7 +460,7 @@ export function createChatGptWebAdapter(
     const checkpointInput = captureLunaCheckpoint
       ? lunaCheckpointStore.apply(parsed)
       : { parsed, applied: false };
-    const conversationKey = !parsed._compactionRequest
+    let conversationKey = (!parsed._compactionRequest || (textTools && projectUrl))
       && !freshConversationPerTurn
       && (parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID || experimentalBiggerContext)
       && (textTools || mode.localTools || (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && experimentalBiggerContext))
@@ -469,10 +469,16 @@ export function createChatGptWebAdapter(
       : undefined;
     const previousRuntime = conversationKey ? chatGptTurnSessions.findConversationHead(conversationKey)?.runtime : undefined;
     const previousInput = previousRuntime?.usageInput;
-    const resumeInput = conversationKey
+    let resumeInput = conversationKey
       ? textTools && previousInput ? textToolResumeRequest(checkpointInput.parsed, previousInput)
         : retainedConversationResumeRequest(checkpointInput.parsed)
       : undefined;
+    const projectCheckpointInPlace = Boolean(parsed._compactionRequest && projectUrl && previousInput
+      && resumeInput && resumeInput !== checkpointInput.parsed);
+    if (parsed._compactionRequest && !projectCheckpointInPlace) {
+      conversationKey = undefined;
+      resumeInput = undefined;
+    }
     const textToolContinuation = Boolean(textTools && resumeInput && resumeInput !== checkpointInput.parsed && previousInput
       && !resumeInput.context.messages.some(message => message.role === "user")
       && textToolCatalog(parsed) === textToolCatalog(previousInput));
@@ -484,7 +490,7 @@ export function createChatGptWebAdapter(
       : undefined;
     const compileOptionsFor = (input: CodexParsedRequest) => {
       if (manualRequest) return {};
-      const experimentalMultipartParts = experimentalBiggerContext
+      const experimentalMultipartParts = experimentalBiggerContext && !projectCheckpointInPlace
         ? resolveBiggerContextMultipartParts(input, turnCapabilities, experimentalSkillAttachments, worker.appName, textTools)
         : undefined;
       return {
@@ -775,8 +781,10 @@ export function createChatGptWebAdapter(
           captureLunaCheckpoint: true,
           onLunaCheckpoint: captureCheckpoint,
         } : {}),
-      })).then(answer => {
+      })).then(async answer => {
         if (textToolContextTokens !== undefined) textToolContextTokens += estimateTokens(answer, parsed.modelId);
+        // The checkpoint closes a full epoch, but is generated in its owned project chat first.
+        if (projectCheckpointInPlace) await releaseRetainedConversation?.();
         return answer;
       }), browserAbort);
       return {
@@ -1276,11 +1284,17 @@ export function createChatGptWebAdapter(
             return;
           }
           const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
-          const sourceConversationKey = chatGptConversationKey(parsed, executionNamespace);
-          if (sourceConversationKey && chatGptTurnSessions.findConversationHead(sourceConversationKey)) {
-            await withAbort(chatGptTurnSessions.retireConversationAndWait(sourceConversationKey), incoming.abortSignal);
-          } else {
-            await chatGptTurnSessions.retireAndWait(responseExecutionKey, incoming.abortSignal);
+          const projectUrl = environment ? savedChatProjectForCwd(savedChatProjects, environment.cwd) : undefined;
+          const sourceConversationKey = chatGptConversationKey(parsed, projectUrl ? `${executionNamespace}:${projectUrl}` : executionNamespace);
+          const source = sourceConversationKey ? chatGptTurnSessions.findConversationHead(sourceConversationKey) : undefined;
+          const checkpointInPlace = Boolean(projectUrl && textTools && source?.runtime.usageInput
+            && textToolResumeRequest(parsed, source.runtime.usageInput) !== parsed);
+          if (!checkpointInPlace) {
+            if (sourceConversationKey && source) {
+              await withAbort(chatGptTurnSessions.retireConversationAndWait(sourceConversationKey), incoming.abortSignal);
+            } else {
+              await chatGptTurnSessions.retireAndWait(responseExecutionKey, incoming.abortSignal);
+            }
           }
         }
         const executionKey = `${executionNamespace}:${textToolTurn ? chatGptTurnRoundKey(parsed) : chatGptTurnExecutionKey(parsed)}`;

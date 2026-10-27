@@ -14,6 +14,7 @@ import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS } from "../src/chatgpt-web-models";
 import { estimateTokens } from "../src/lib/token-estimate";
 import { resolve } from "node:path";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
+import * as launcherHost from "../src/launcher-browser-host";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
 
 const usage = { inputTokens: 1, outputTokens: 1 };
@@ -87,6 +88,63 @@ test("a trusted workspace routes to its saved project while other workspaces kee
     }
     expect(routes).toEqual([projectUrl, projectUrl, undefined]);
   } finally { browser.mockRestore(); environment.mockRestore(); }
+});
+
+test("project checkpoint uses the existing chat and only its unseen suffix before rollover", async () => {
+  const release = spyOn(launcherHost, "releaseLauncherRetainedConversation").mockResolvedValue(0);
+  const root = resolve("test-workspaces", "checkpoint");
+  const projectUrl = "https://chatgpt.com/g/g-p-0123456789abcdef0123456789abcdef-demo/project";
+  const environment = spyOn(ChatGptThreadEnvironmentStore.prototype, "resolve").mockReturnValue({
+    cwd: root, roots: [root], writableRoots: [root], sandboxPolicy: { type: "dangerFullAccess" }, tools: [],
+  });
+  const keys: unknown[] = [];
+  const prompts: string[] = [];
+  const browser = spyOn(ChatGptBrowserWorker, "forProvider").mockReturnValue({ appName: "Codex Native2",
+    async run(turn: any) {
+      keys.push(turn.conversationKey);
+      expect(turn.projectUrl).toBe(projectUrl);
+      const reused = keys.length === 2;
+      const compiled = await (reused ? turn.prepareResume() : turn.prepare());
+      if (turn.compaction) expect(compiled.multipart).toBeUndefined();
+      await turn.onPreparedSelected?.(reused);
+      prompts.push(compiled.text);
+      const answer = turn.compaction ? "The diagnostic completed. Continue its pending verification." : '{"kind":"final","text":"done"}';
+      turn.onTextDelta(answer); return answer;
+    },
+  } as any);
+  try {
+    const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `project-checkpoint://${randomUUID()}`,
+      chatgptWeb: { browserHost: "launcher", browserHostDescriptorPath: "synthetic-project-descriptor.json",
+        experimentalBiggerContext: true,
+        textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true,
+        savedChatProjects: [{ root, url: projectUrl }] } });
+    const parsed = request();
+    parsed.context.messages[0]!.content = "UNIQUE_INITIAL_PROJECT_CONTEXT";
+    await adapter.runTurn(parsed, { headers: new Headers() }, () => {});
+    const compact = structuredClone(parsed);
+    compact._compactionRequest = true;
+    compact.context.messages.push({ role: "user", content: COMPACT_PROMPT, timestamp: 2 });
+    (compact._rawBody as any).input.push({ type: "message", role: "user", content: COMPACT_PROMPT });
+    const events: AdapterEvent[] = [];
+    await adapter.runTurn(compact, { headers: new Headers() }, event => events.push(event));
+    expect(events.some(event => event.type === "error")).toBeFalse();
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBeDefined();
+    expect(keys[1]).toBe(keys[0]);
+    expect(prompts[1]).toContain(COMPACT_PROMPT.split("\n")[0]!);
+    expect(prompts[1]).not.toContain("UNIQUE_INITIAL_PROJECT_CONTEXT");
+    expect(release).toHaveBeenCalledTimes(1);
+    const next = structuredClone(parsed);
+    const summary = `${SUMMARY_PREFIX}\nThe diagnostic completed. Continue its pending verification.`;
+    next.context.messages.push({ role: "user", content: summary, timestamp: 3 });
+    (next._rawBody as any).input.push({ type: "message", role: "user", content: summary });
+    await adapter.runTurn(next, { headers: new Headers() }, () => {});
+    expect(keys).toHaveLength(3);
+    expect(keys[2]).toBeDefined();
+    expect(keys[2]).not.toBe(keys[0]);
+    expect(prompts[2]).toContain("Continue its pending verification");
+    expect(release).toHaveBeenCalledTimes(1);
+  } finally { browser.mockRestore(); environment.mockRestore(); release.mockRestore(); }
 });
 
 test("valid call is relayed to native Codex; malformed, unknown and invalid calls fail closed", () => {

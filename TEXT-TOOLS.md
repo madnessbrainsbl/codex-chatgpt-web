@@ -34,6 +34,16 @@ does not depend on project memory reproducing the previous transcript. Existing
 conversation ownership and delta continuation still apply. Invalid URLs and
 redirects to another surface fail before the prompt is sent. Create the project
 in ChatGPT first; this version binds an existing project and does not create one.
+When the current project chat is retained and its canonical prefix is unchanged,
+native context compaction asks that same chat for its final checkpoint using only
+the unseen suffix. It does not open a separate summarization chat or resend the
+whole transcript. An incremental same-chat checkpoint also bypasses Bigger
+Context's forced six-part compaction staging: the retained transcript is already
+in the browser. The old epoch is released after its summary completes; the next
+working epoch starts in the same project. A missing lease or changed canonical
+prefix requires a fresh project surface with complete context rather than an
+unverified delta. Ordinary tool rounds and subsequent user requests keep the same
+chat; the existing model-specific context guard still controls automatic rollover.
 
 The browser copy of each tool result is capped at 12,000 text characters, keeping
 the beginning and end and an explicit omission notice. Image parts, error status,
