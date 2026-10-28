@@ -9,6 +9,7 @@ import { rememberCompactionContinuation } from "../src/adapters/chatgpt-web/comp
 import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
 import { parseRequest } from "../src/responses/parser";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
+import { resolveCurrentCodexRolloutEnvironment } from "../src/adapters/chatgpt-web/codex-rollout-environment";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { CodexParsedRequest, CodexTool } from "../src/types";
@@ -2202,6 +2203,143 @@ describe("trusted Codex task environment continuity", () => {
     writeRollout([session, history, childTurnContext()]);
     expect(() => store.resolve(request)).toThrow("no current task boundary");
   });
+
+  function paginatedCompactionFixture() {
+    const fixture = resumedRootFixture();
+    const { codexHome, request, rolloutPath } = fixture;
+    const source = readFileSync(rolloutPath, "utf8").trim().split("\n")
+      .map((line, ordinal) => ({ ...JSON.parse(line), ordinal }));
+    const prefix = source.map(item => JSON.stringify(item)).join("\n") + "\n";
+    // The reverted tail must never supply authority, even if it names the current turn.
+    writeFileSync(rolloutPath, prefix + JSON.stringify({ ...childTurnContext(rolloutParentId), ordinal: 2 }) + "\n");
+    const branchPath = rolloutPath.replace(".jsonl", `_${rolloutParentId}.jsonl`);
+    const meta = {
+      type: "session_meta", ordinal: 2,
+      payload: { id: rolloutThreadId, source: "vscode", history_mode: "paginated",
+        history_base: { thread_id: rolloutThreadId, end_ordinal_exclusive: 2, end_byte_offset: Buffer.byteLength(prefix) } },
+    };
+    writeFileSync(branchPath, JSON.stringify(meta) + "\n");
+    const database = new Database(join(codexHome, "state_5.sqlite"), { create: true });
+    database.exec("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, agent_path TEXT)");
+    database.exec("CREATE TABLE thread_spawn_edges (parent_thread_id TEXT, child_thread_id TEXT, status TEXT)");
+    database.query("INSERT INTO threads VALUES (?, ?, NULL)").run(rolloutThreadId, branchPath);
+    database.close();
+    request._compactionRequest = true;
+    const body = request._rawBody as { client_metadata: Record<string, string>; input: Array<Record<string, unknown>> };
+    const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
+    metadata.request_kind = "compaction";
+    metadata.turn_id = rolloutParentId;
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+    body.input.push({ type: "compaction_trigger" });
+    return { ...fixture, branchPath, meta };
+  }
+
+  test("compaction reads the inherited paginated prefix when an edited branch has no turn context", () => {
+    const { codexHome, request } = paginatedCompactionFixture();
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+  });
+
+  test("paginated compaction never reads a reverted source tail", () => {
+    const { codexHome, request } = paginatedCompactionFixture();
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    body.input[0]!.internal_chat_message_metadata_passthrough = { turn_id: rolloutParentId };
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
+      .toThrow("does not belong to the requested turn");
+  });
+
+  function preTurnPaginatedFixture(sourceIsCurrent: boolean) {
+    const fixture = paginatedCompactionFixture();
+    const body = fixture.request._rawBody as { input: Array<Record<string, unknown>> };
+    const sourceTurn = sourceIsCurrent ? rolloutParentId : "01a06c66-0000-75c6-a0df-318f890ef6de";
+    body.input[0]!.internal_chat_message_metadata_passthrough = { turn_id: sourceTurn };
+    const settings = { type: "event_msg", payload: { type: "thread_settings_applied", thread_id: rolloutThreadId,
+      thread_settings: { cwd: root, runtime_workspace_roots: [root], permission_profile: { type: "disabled" },
+        active_permission_profile: { id: ":danger-full-access" } } } };
+    const boundary = { type: "event_msg", payload: { type: "task_started", turn_id: rolloutParentId } };
+    const message = { type: "response_item", payload: structuredClone(body.input[0]!) };
+    const records = [fixture.meta, settings, ...(sourceIsCurrent ? [boundary, message] : [message, boundary])];
+    writeFileSync(fixture.branchPath, records.map((item, index) => JSON.stringify({ ...item, ordinal: index + 2 })).join("\n") + "\n");
+    return { ...fixture, records, body };
+  }
+
+  for (const sourceIsCurrent of [true, false]) test(`pre-turn paginated compaction authenticates native settings with ${sourceIsCurrent ? "new" : "previous failed"} source message`, () => {
+    const { codexHome, request } = preTurnPaginatedFixture(sourceIsCurrent);
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+  });
+
+  for (const invalid of ["stale turn", "forged message", "different owner", "managed policy", "newer context", "source before task", "ordinary request"]) {
+    test(`pre-turn paginated compaction rejects ${invalid}`, () => {
+      const { codexHome, request, records, branchPath, body } = preTurnPaginatedFixture(true);
+      if (invalid === "stale turn") (records[2]!.payload as Record<string, unknown>).turn_id = rolloutTurnId;
+      if (invalid === "forged message") body.input[0]!.content = [{ type: "input_text", text: "forged" }];
+      const settings = records[1]!.payload as Record<string, unknown>;
+      if (invalid === "different owner") settings.thread_id = rolloutParentId;
+      if (invalid === "managed policy") (settings.thread_settings as Record<string, unknown>).permission_profile = { type: "managed" };
+      if (invalid === "newer context") records.push(childTurnContext() as typeof records[number]);
+      if (invalid === "source before task") [records[2], records[3]] = [records[3]!, records[2]!];
+      if (invalid === "ordinary request") request._compactionRequest = false;
+      writeFileSync(branchPath, records.map((item, index) => JSON.stringify({ ...item, ordinal: index + 2 })).join("\n") + "\n");
+      expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request)).toThrow();
+    });
+  }
+
+  test("paginated compaction follows exact physical source IDs through multiple edited branches", () => {
+    const { codexHome, request, branchPath, meta } = paginatedCompactionFixture();
+    const prefix = readFileSync(branchPath);
+    const nextPath = branchPath.replace(`_${rolloutParentId}.jsonl`, "_01a06c66-0000-75c6-a0df-318f890ef6de.jsonl");
+    writeFileSync(nextPath, JSON.stringify({ ...meta, ordinal: 3, payload: { ...meta.payload,
+      history_base: { thread_id: rolloutParentId, end_ordinal_exclusive: 3, end_byte_offset: prefix.length } } }) + "\n");
+    const database = new Database(join(codexHome, "state_5.sqlite"));
+    database.query("UPDATE threads SET rollout_path = ? WHERE id = ?").run(nextPath, rolloutThreadId);
+    database.close();
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+  });
+
+  test("paginated authority checks authenticate inherited messages and checkpoints across segment boundaries", () => {
+    const { codexHome, rolloutPath, branchPath, meta } = paginatedCompactionFixture();
+    const message = { type: "message", role: "user", id: "inherited_environment",
+      content: [{ type: "input_text", text: environmentXml }] };
+    const checkpoint = { type: "message", role: "user", id: "inherited_checkpoint", content: "checkpoint" };
+    const records = [
+      { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } },
+      { type: "response_item", payload: message },
+      childTurnContext(),
+      { type: "compacted", payload: { replacement_history: [checkpoint] } },
+    ];
+    const prefix = records.map((item, ordinal) => JSON.stringify({ ...item, ordinal })).join("\n") + "\n";
+    writeFileSync(rolloutPath, prefix);
+    meta.ordinal = records.length;
+    meta.payload.history_base.end_ordinal_exclusive = records.length;
+    meta.payload.history_base.end_byte_offset = Buffer.byteLength(prefix);
+    writeFileSync(branchPath, JSON.stringify(meta) + "\n" + JSON.stringify({ ordinal: 5,
+      type: "event_msg", payload: { type: "task_started", turn_id: rolloutParentId } }) + "\n");
+    const options = { codexHome, lineage: { threadId: rolloutThreadId,
+      sandboxType: "dangerFullAccess" as const, workspaceRoots: [root] }, turnId: rolloutParentId,
+      compactionSourceTurnId: rolloutTurnId, historicalEnvironmentMessages: [message],
+      compactedEnvironmentItems: [checkpoint] };
+    expect(resolveCurrentCodexRolloutEnvironment(options)?.environment.cwd).toBe(root);
+    expect(() => resolveCurrentCodexRolloutEnvironment({ ...options,
+      compactedEnvironmentItems: [{ ...checkpoint, content: "forged" }] })).toThrow("native compaction");
+    expect(() => resolveCurrentCodexRolloutEnvironment({ ...options,
+      historicalEnvironmentMessages: [{ ...message, content: [{ type: "input_text", text: "forged" }] }] }))
+      .toThrow("differs from its native Codex record");
+  });
+
+  for (const invalid of ["partial record", "past EOF", "wrong ordinal", "wrong source", "cycle", "wrong owner"]) {
+    test(`paginated compaction rejects ${invalid}`, () => {
+      const { codexHome, request, branchPath, rolloutPath, meta } = paginatedCompactionFixture();
+      const base = meta.payload.history_base;
+      if (invalid === "partial record") base.end_byte_offset -= 1;
+      if (invalid === "past EOF") base.end_byte_offset += 10000;
+      if (invalid === "wrong ordinal") { base.end_ordinal_exclusive += 1; meta.ordinal += 1; }
+      if (invalid === "wrong source") base.thread_id = "01a06c66-0000-75c6-a0df-318f890ef6de";
+      if (invalid === "cycle") base.thread_id = rolloutParentId;
+      if (invalid === "wrong owner") writeFileSync(rolloutPath,
+        readFileSync(rolloutPath, "utf8").replace(`"id":"${rolloutThreadId}"`, `"id":"${rolloutParentId}"`));
+      writeFileSync(branchPath, JSON.stringify(meta) + "\n");
+      expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request)).toThrow();
+    });
+  }
 
   test("compaction authenticates the latest native turn as current or source, never an arbitrary ancestor", () => {
     const { codexHome, request, rolloutPath } = resumedRootFixture();

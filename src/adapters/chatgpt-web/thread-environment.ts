@@ -214,10 +214,11 @@ export class ChatGptThreadEnvironmentStore {
       const currentClaim = initialClaim ?? (currentCompaction
         ? extractChatGptContinuationEnvironmentClaim(parsed) : steeringClaim ?? nativeCompaction?.claim);
       const rolloutIdentity = lineage ?? extractChatGptRootThreadMetadata(parsed);
-      // Automatic compaction has a current turn_context; standalone compaction has only its
-      // source turn_context. Either must be the latest native record, never an arbitrary ancestor.
-      const compactionSourceTurnId = parsed._compactionRequest
-        ? extractChatGptCompactionSourceRevision(parsed).turnId : undefined;
+      // Pre-turn compaction can precede turn_context; its source message and current native
+      // task/settings must then be authenticated by the rollout reader instead.
+      const compactionSourceRevision = parsed._compactionRequest
+        ? extractChatGptCompactionSourceRevision(parsed) : undefined;
+      const compactionSourceTurnId = compactionSourceRevision?.turnId;
       if (rolloutIdentity && identity.turnId) {
         const rollout = resolveCurrentCodexRolloutEnvironment({
           codexHome: this.codexHomes[0]!,
@@ -226,6 +227,7 @@ export class ChatGptThreadEnvironmentStore {
           lineage: rolloutIdentity,
           turnId: identity.turnId,
           ...(compactionSourceTurnId ? { compactionSourceTurnId } : {}),
+          ...(compactionSourceRevision ? { compactionSourceRevision } : {}),
           ...(historicalMessages ? { historicalEnvironmentMessages: historicalMessages } : {}),
           ...(nativeCompaction ? { compactedEnvironmentItems: nativeCompaction.items } : {}),
           tools: parsed.context.tools,
