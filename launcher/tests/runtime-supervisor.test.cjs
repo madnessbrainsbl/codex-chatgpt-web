@@ -68,11 +68,11 @@ function launcherConfig(descriptorPath, overrides = {}) {
   };
 }
 
-test("project routing exposes saved retained chats without rewriting the private legacy preferences", () => {
+test("project routing keeps standalone chats temporary without rewriting the private preferences", () => {
   const descriptor = path.join(os.tmpdir(), "project-routing-launcher.json");
   const input = launcherConfig(descriptor, { projectChatRouting: true, useSavedChats: false, experimentalFreshConversationPerTurn: true });
   const normalized = validateConfig(input, descriptor);
-  assert.equal(normalized.useSavedChats, true);
+  assert.equal(normalized.useSavedChats, false);
   assert.equal(normalized.experimentalFreshConversationPerTurn, false);
   assert.equal(input.useSavedChats, false);
   assert.throws(() => validateConfig({ ...input, projectChatRouting: "true" }, descriptor), /invalid projectChatRouting/);

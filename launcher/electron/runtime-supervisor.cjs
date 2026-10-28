@@ -326,7 +326,7 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
       throw new Error("Active browser interaction mode does not match the active tunnel");
     }
   }
-  return config.projectChatRouting ? { ...config, useSavedChats: true, experimentalFreshConversationPerTurn: false } : config;
+  return config.projectChatRouting ? { ...config, useSavedChats: false, experimentalFreshConversationPerTurn: false } : config;
 }
 
 class RuntimeSupervisor {

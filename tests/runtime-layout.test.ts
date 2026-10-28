@@ -310,6 +310,12 @@ test("conversation preferences survive reload; saved chats also apply to Zero Ri
   expect(providerConfig({ ...loaded, browserInteractionMode: "manual" })
     .chatgptWeb!.experimentalFreshConversationPerTurn).toBe(false);
   expect(loaded.experimentalFreshConversationPerTurn).toBe(true);
+  config.projectChatRouting = true;
+  persist();
+  expect(loadConfig().useSavedChats).toBe(false);
+  expect(loadConfig().experimentalFreshConversationPerTurn).toBe(false);
+  expect(providerConfig(loadConfig()).chatgptWeb!.useSavedChats).toBe(false);
+  config.projectChatRouting = false;
   config.experimentalFreshConversationPerTurn = "true";
   persist();
   expect(() => loadConfig()).toThrow("experimentalFreshConversationPerTurn");

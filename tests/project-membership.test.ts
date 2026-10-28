@@ -33,4 +33,5 @@ test("project setup accepts only an explicit complete project link", () => {
   expect(projectSetupReply(`[${url}](${url})`)).toBe(url);
   expect(projectSetupReply(`Review this document containing ${url}`)).toBeUndefined();
   expect(projectSetupReply("https://example.com/project")).toBeUndefined();
+  expect(projectSetupReply("https://chatgpt.com/s/cx_0123456789abcdef0123456789abcdef")).toBeUndefined();
 });

@@ -567,7 +567,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.useSavedChats !== undefined && typeof parsed.useSavedChats !== "boolean") {
     throw new Error(`Invalid useSavedChats in ${path}`);
   }
-  const useSavedChats = parsed.projectChatRouting === true || parsed.useSavedChats !== false;
+  const useSavedChats = parsed.projectChatRouting !== true && parsed.useSavedChats !== false;
   const savedChatProjects = validateSavedChatProjects(parsed.savedChatProjects);
   if (parsed.projectChatRouting !== undefined && typeof parsed.projectChatRouting !== "boolean") {
     throw new Error(`Invalid projectChatRouting in ${path}`);

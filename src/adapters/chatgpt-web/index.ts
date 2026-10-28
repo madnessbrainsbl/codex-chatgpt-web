@@ -360,7 +360,7 @@ export function createChatGptWebAdapter(
 ): ProviderAdapter {
   const projectChatRouting = provider.chatgptWeb?.projectChatRouting === true;
   if (projectChatRouting) {
-    provider = { ...provider, chatgptWeb: { ...provider.chatgptWeb, useSavedChats: true, experimentalFreshConversationPerTurn: false } };
+    provider = { ...provider, chatgptWeb: { ...provider.chatgptWeb, useSavedChats: false, experimentalFreshConversationPerTurn: false } };
   }
   const savedChats = provider.chatgptWeb?.useSavedChats === true;
   const worker = ChatGptBrowserWorker.forProvider(provider);

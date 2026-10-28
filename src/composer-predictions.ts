@@ -27,6 +27,8 @@ export function configureComposerPrediction(parsed: CodexParsedRequest, config: 
     experimentalSkillAttachments: false,
     experimentalFreshConversationPerTurn: true,
     useSavedChats: false,
+    projectChatRouting: false,
+    savedChatProjects: [],
   };
 }
 

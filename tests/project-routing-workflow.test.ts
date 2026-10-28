@@ -23,7 +23,7 @@ test("unbound projects ask once, persist an explicit reply, and continue the ori
   let sends = 0;
   const url = "https://chatgpt.com/g/g-p-0123456789abcdef0123456789abcdef-example/project";
   const browser = spyOn(ChatGptBrowserWorker, "forProvider").mockImplementation((provider: any) => {
-    expect(provider.chatgptWeb.useSavedChats).toBeTrue();
+    expect(provider.chatgptWeb.useSavedChats).toBeFalse();
     return { appName: "Codex Native2", async run(turn: any) {
       sends++;
       expect(turn.projectUrl).toBe(url);
@@ -84,7 +84,7 @@ test.each(["standalone", "bound", "native-chatgpt", "compaction-unbound", "unsol
   });
   let sends = 0;
   const browser = spyOn(ChatGptBrowserWorker, "forProvider").mockImplementation((provider: any) => {
-    expect(provider.chatgptWeb.useSavedChats).toBeTrue();
+    expect(provider.chatgptWeb.useSavedChats).toBeFalse();
     expect(provider.chatgptWeb.experimentalFreshConversationPerTurn).toBeFalse();
     return { appName: "Codex Native2", async run(turn: any) {
       sends++;

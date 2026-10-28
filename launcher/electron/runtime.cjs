@@ -1279,7 +1279,7 @@ class RuntimeHost {
   async setUseSavedChats(enabled) {
     if (typeof enabled !== "boolean") throw new Error("Saved chat preference must be a boolean");
     const current = this.runtimeConfigSnapshot();
-    if (current.config?.projectChatRouting && !enabled) throw new Error("Project chat routing requires saved ChatGPT conversations");
+    if (current.config?.projectChatRouting && enabled) throw new Error("Project routing keeps standalone chats temporary; project chats are saved in their bound project");
     if (!current.configured) throw new Error("Initialize the runtime before changing saved chats");
     const development = this.launcherProfile === "development";
     const args = [
