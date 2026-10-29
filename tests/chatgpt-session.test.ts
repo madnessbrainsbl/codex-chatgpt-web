@@ -221,6 +221,7 @@ test("a complete authenticated composer with no effort selector is Luna-only", a
   const page = {
     locator: () => composer,
     evaluate: async () => true,
+    url: () => "https://chatgpt.com/?temporary-chat=true",
   };
 
   await expect(detectChatGptAccountCapabilities(page as never, {
@@ -252,6 +253,7 @@ test("a transient effort control does not turn a Luna-only account into Sol", as
   const page = {
     locator: () => composers,
     evaluate: async () => true,
+    url: () => "https://chatgpt.com/?temporary-chat=true",
   };
 
   await expect(detectChatGptAccountCapabilities(page as never, {

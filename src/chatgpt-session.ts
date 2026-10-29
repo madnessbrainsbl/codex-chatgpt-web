@@ -22,10 +22,20 @@ export const CHATGPT_COMPOSER_SELECTOR = [
   '[contenteditable="true"][data-lexical-editor="true"]',
   'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"][role="textbox"]',
 ].join(", ");
+
+export function chatGptComposerSelectorForUrl(url: string): string {
+  const conversation = /\/c\/([^/]+)\/?$/.exec(new URL(url).pathname)?.[1];
+  if (!conversation) return CHATGPT_COMPOSER_SELECTOR;
+  const composer = `:is(${CHATGPT_COMPOSER_SELECTOR})`;
+  // Saved-chat hydration can leave an optimistic composer mounted beside the server-owned one.
+  return `[data-map-composer-conversation=${JSON.stringify(conversation)}] ${composer}, `
+    + `${composer}:not([data-map-composer-conversation] *)`;
+}
+
 export const CHATGPT_EFFORT_CONTROL_SELECTOR = [
   'button[aria-haspopup="menu"][data-tone="neutral"]',
   'button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]',
-  'button[data-codex-intelligence-trigger="true"][data-composer-navigation-target="reasoning"][aria-haspopup="menu"]',
+  'button[data-composer-navigation-target="reasoning"][aria-haspopup="menu"]',
 ].join(", ");
 export const CHATGPT_EFFORT_MENU_SELECTOR = [
   '[data-testid="composer-intelligence-picker-content"]:has([role="menuitemradio"], [data-model-reasoning-effort-slider])',
@@ -331,7 +341,7 @@ export async function waitForChatGptEffortControl(
   page: Page,
   options: ChatGptCapabilityProbeOptions = {},
 ): Promise<Locator | undefined> {
-  const composers = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
+  const composers = page.locator(chatGptComposerSelectorForUrl(page.url())).filter({ visible: true });
   const composer = composers;
   const composerForm = composer.locator("xpath=ancestor::form[1]");
   const effortButton = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true });
@@ -395,10 +405,7 @@ export async function detectChatGptAccountCapabilities(
   const effortButton = await waitForChatGptEffortControl(page, options);
   if (!effortButton) return { solAvailable: false, extraHighAvailable: false, proAvailable: false };
   try {
-    const menu = page.locator(CHATGPT_EFFORT_MENU_SELECTOR).last();
-    const menuVisible = await menu.isVisible().catch(() => false);
-    const menuExpanded = await effortButton.getAttribute("aria-expanded").catch(() => null);
-    if (!menuVisible && menuExpanded !== "true") await effortButton.press("Enter");
+    await activateChatGptEffortMenu(page, effortButton);
     return await readChatGptEffortCapabilities(chatGptEffortSlider(page), options);
   } finally {
     await page.keyboard.press("Escape").catch(() => {});

@@ -5,6 +5,38 @@ import { ChatGptBrowserWorker, setChatGptThinkMode } from "../src/adapters/chatg
 import { CHATGPT_COMPOSER_SELECTOR, detectChatGptAccountCapabilities } from "../src/chatgpt-session";
 import { assertChatGptModelFamily } from "../src/adapters/chatgpt-web/model-selection";
 
+for (const control of ["current", "legacy"])
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`capability inspection recognizes the ${control} pointer-only reasoning control`, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    // The current control attributes and three unlocked power ticks were observed
+    // in the embedded ChatGPT on 2026-10-29; account and conversation data omitted.
+    await page.setContent(`<button data-composer-navigation-target="reasoning" aria-haspopup="menu">Unrelated control</button>
+      <form data-chatgpt-composer><div id="prompt-textarea" contenteditable="true">Draft</div>
+        <button id="reasoning" type="button" aria-haspopup="menu" aria-expanded="false"
+          ${control === "current" ? 'data-composer-navigation-target="reasoning" data-selected-reasoning-effort="high"' : 'data-tone="neutral"'}>6 High</button>
+      </form>
+      <div id="picker" role="menu" hidden><div role="menuitem"><div data-model-picker-power-slider style="height:30px;width:250px">
+        <span data-orientation="horizontal" aria-disabled="false">
+          <span data-selected="true"></span><span data-selected="true"></span><span data-selected="true"></span>
+          <span role="slider" aria-valuemin="0" aria-valuemax="2" aria-valuenow="2"></span>
+        </span></div></div></div>
+      <script>
+        const control=document.querySelector('#reasoning'), menu=document.querySelector('#picker');
+        control.onpointerdown=()=>{menu.hidden=false;control.setAttribute('aria-expanded','true');};
+        document.addEventListener('keydown',e=>{
+          if(e.key==='Escape'){menu.hidden=true;control.setAttribute('aria-expanded','false');}
+        });
+      </script>`);
+    const actual = await detectChatGptAccountCapabilities(page, { selectorTimeoutMs: 250, stableAbsenceMs: 0 });
+    expect(actual).toEqual({ solAvailable: true, extraHighAvailable: false, proAvailable: false });
+    expect(await page.locator('#prompt-textarea').innerText()).toBe("Draft");
+    expect(await page.locator('[role="slider"]').getAttribute('aria-valuenow')).toBe("2");
+    expect(await page.locator('#picker').isVisible()).toBe(false);
+  } finally { await browser.close(); }
+}, 15_000);
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("pre-send family verification waits for the current slider announcement to settle", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {

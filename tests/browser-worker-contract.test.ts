@@ -1200,6 +1200,7 @@ test("active composer resolution waits for exactly one visible editor", async ()
         return visibleComposers;
       },
     }),
+    url: () => "https://chatgpt.com/?temporary-chat=true",
   };
   const activeComposer = (ChatGptBrowserWorker.prototype as unknown as {
     activeComposer(page: unknown, timeoutMs?: number): Promise<unknown>;

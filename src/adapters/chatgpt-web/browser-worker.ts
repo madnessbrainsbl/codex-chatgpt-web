@@ -69,6 +69,7 @@ import {
   CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
   activateChatGptEffortMenu,
+  chatGptComposerSelectorForUrl,
   detectChatGptAccountCapabilities,
   readChatGptEffortCapabilities,
   readChatGptEffortSnapshot,
@@ -2917,7 +2918,7 @@ export class ChatGptBrowserWorker {
     timeoutMs = 30_000,
     abortSignal?: AbortSignal,
   ): Promise<Locator> {
-    const composers = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
+    const composers = page.locator(chatGptComposerSelectorForUrl(page.url())).filter({ visible: true });
     const deadline = Date.now() + timeoutMs;
     let count = 0;
     while (Date.now() < deadline) {

@@ -87,6 +87,57 @@ test("reports a genuinely rejected edit as a failure", () => {
   expect(insertPlainTextIntoComposer(composer, "staged part")).toBeFalse();
 });
 
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("saved-thread hydration never inserts into its optimistic composer", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.route("https://chatgpt.com/**", route => route.fulfill({ contentType: "text/html", body: `
+      <div data-map-composer-conversation="local-chatgpt:optimistic">
+        <form data-chatgpt-composer><div data-composer-markdown contenteditable="true" role="textbox" style="min-height:40px"></div></form>
+      </div>
+      <div data-map-composer-conversation="server-thread" hidden>
+        <form data-chatgpt-composer><div data-composer-markdown contenteditable="true" role="textbox" style="min-height:40px"></div></form>
+      </div>
+      <script>
+        const outgoing=document.querySelector('[data-map-composer-conversation="local-chatgpt:optimistic"]');
+        const current=document.querySelector('[data-map-composer-conversation="server-thread"]');
+        const hydrate=()=>{outgoing.hidden=true;current.hidden=false;};
+        outgoing.addEventListener('input',()=>{if(outgoing.textContent.trim())setTimeout(hydrate,0);});
+        setTimeout(hydrate,500);
+      </script>` }));
+    await page.goto("https://chatgpt.com/c/server-thread");
+    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), { config: { appName: "Codex Native2" } }) as any;
+    const prompt = "Literal `context` and spaces.\n".repeat(5_000).slice(0, 127_393);
+    await worker.insertPromptText(page, prompt);
+    await page.waitForFunction(() => !document.querySelector<HTMLElement>('[data-map-composer-conversation="server-thread"]')!.hidden);
+    const observed = await worker.attachedPromptText(page);
+    expect({ chars: observed.length, exact: observed === prompt }).toEqual({ chars: prompt.length, exact: true });
+    expect((await page.locator('[data-map-composer-conversation="local-chatgpt:optimistic"] [contenteditable]').textContent())?.length).toBe(0);
+  } finally { await browser.close(); }
+}, 15_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("saved-thread composer scope keeps legacy editors and excludes other conversations", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.route("https://chatgpt.com/**", route => route.fulfill({ contentType: "text/html", body: "" }));
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    for (const path of ["/c/current", "/g/g-p-0123456789abcdef0123456789abcdef-demo/c/current"]) {
+      await page.goto("https://chatgpt.com" + path);
+      await page.setContent(`<div data-map-composer-conversation="other"><form data-chatgpt-composer>
+        <div data-composer-markdown contenteditable="true" role="textbox">Other draft</div>
+      </form></div><form><div id="prompt-textarea" contenteditable="true">Legacy draft</div></form>`);
+      const composer = await worker.activeComposer(page, 500);
+      expect(await composer.innerText()).toBe("Legacy draft");
+      await page.locator('#prompt-textarea').evaluate(element => element.remove());
+      const error = await worker.activeComposer(page, 100).then(() => undefined, (error: unknown) => error);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.cause.message).toContain("count was 0");
+      expect(await page.locator('[data-map-composer-conversation="other"]').innerText()).toContain("Other draft");
+    }
+  } finally { await browser.close(); }
+}, 15_000);
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a selected connector never appends a new request to an old draft", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
