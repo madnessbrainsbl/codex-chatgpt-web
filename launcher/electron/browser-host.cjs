@@ -264,6 +264,7 @@ function loadCommittedBrowserSurface(
     let settled = false;
     const cleanup = () => {
       clearTimeout(timeout);
+      contents.off("dom-ready", onReady);
       contents.off("did-stop-loading", onReady);
       contents.off("did-finish-load", onReady);
       contents.off("did-fail-load", onFailed);
@@ -299,6 +300,7 @@ function loadCommittedBrowserSurface(
       if (!contents.isDestroyed()) contents.stop();
     }, timeoutMs);
     timeout.unref?.();
+    contents.on("dom-ready", onReady);
     contents.on("did-stop-loading", onReady);
     contents.on("did-finish-load", onReady);
     contents.on("did-fail-load", onFailed);

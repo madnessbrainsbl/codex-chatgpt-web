@@ -299,6 +299,29 @@ test("primary browser bootstrap accepts only the exact committed idle document",
   assert.equal(contents.listenerCount("destroyed"), 0);
 });
 
+test("idle document DOM readiness does not wait for load completion", async () => {
+  const keepTestAlive = setTimeout(() => {}, 100);
+  const contents = new EventEmitter();
+  let currentUrl = "about:blank";
+  const calls = [];
+  contents.isDestroyed = () => false;
+  contents.getURL = () => currentUrl;
+  contents.stop = () => calls.push("stop");
+  contents.loadURL = () => {
+    queueMicrotask(() => {
+      contents.emit("dom-ready"); // An unrelated document must not grant readiness.
+      currentUrl = IDLE_BROWSER_URL;
+      contents.emit("dom-ready");
+    });
+    return new Promise(() => {});
+  };
+  try {
+    await loadCommittedBrowserSurface(contents, IDLE_BROWSER_URL, 15);
+    assert.deepEqual(calls, []);
+    assert.equal(contents.listenerCount("dom-ready"), 0);
+  } finally { clearTimeout(keepTestAlive); }
+});
+
 test("primary browser bootstrap fails closed on navigation, renderer, and timeout boundaries", async () => {
   const keepTestAlive = setTimeout(() => {}, 100);
   try {
@@ -332,12 +355,16 @@ test("primary browser bootstrap fails closed on navigation, renderer, and timeou
     stalled.isDestroyed = () => false;
     stalled.getURL = () => "about:blank";
     stalled.stop = () => calls.push("stop");
-    stalled.loadURL = () => new Promise(() => {});
+    stalled.loadURL = () => {
+      queueMicrotask(() => stalled.emit("dom-ready"));
+      return new Promise(() => {});
+    };
     await assert.rejects(
       loadCommittedBrowserSurface(stalled, IDLE_BROWSER_URL, 5),
       /idle document did not commit within 5ms/,
     );
     assert.deepEqual(calls, ["stop"]);
+    assert.equal(stalled.listenerCount("dom-ready"), 0);
   } finally {
     clearTimeout(keepTestAlive);
   }
