@@ -1,5 +1,6 @@
 const { createServer } = require("node:http");
 const { randomBytes, timingSafeEqual } = require("node:crypto");
+const { listenOnLoopback } = require("./loopback-port.cjs");
 const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -71,16 +72,7 @@ class BrowserControlServer {
   }
 
   async start() {
-    await new Promise((resolve, reject) => {
-      this.server.once("error", reject);
-      this.server.listen(0, "127.0.0.1", () => {
-        this.server.off("error", reject);
-        const address = this.server.address();
-        this.port = address && typeof address === "object" ? address.port : 0;
-        if (!this.port) reject(new Error("Browser control server did not receive a port"));
-        else resolve();
-      });
-    });
+    this.port = await listenOnLoopback(this.server);
     this.logger.info("browser.control_started", { port: this.port });
     return this;
   }

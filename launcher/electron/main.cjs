@@ -3,6 +3,7 @@ configureWindowsTrust();
 const languages = require("./languages.json");
 const fs = require("node:fs");
 const net = require("node:net");
+const { listenOnLoopback } = require("./loopback-port.cjs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
@@ -111,17 +112,12 @@ let catalogVerificationInFlight = false;
 let updateController = null;
 let limitsController = null;
 
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port = address && typeof address === "object" ? address.port : 0;
-      server.close((error) => error ? reject(error) : resolve(port));
-    });
-  });
+async function findFreePort() {
+  const server = net.createServer();
+  server.unref();
+  const port = await listenOnLoopback(server);
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  return port;
 }
 
 function send(channel, value) {
