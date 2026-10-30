@@ -10,27 +10,70 @@ const {
   validateSidebarState,
 } = require("../electron/state.cjs");
 
-test("prediction setting starts on and remains off after reopening the state store", () => {
+test("predictions and Temporary Chat start on and preserve an explicit opt-out after reopening", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-prediction-state-"));
   const file = path.join(root, "state.json");
   try {
     const store = createStateStore(file);
     assert.equal(store.read().composerPredictionsEnabled, true);
-    store.update({ composerPredictionsEnabled: false });
+    assert.equal(store.read().useTemporaryChats, true);
+    store.update({ composerPredictionsEnabled: false, useTemporaryChats: false });
     assert.equal(createStateStore(file).read().composerPredictionsEnabled, false);
+    assert.equal(createStateStore(file).read().useTemporaryChats, false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("saved chats default on for new or missing settings and preserve an explicit opt-out", () => {
+test("retired saved-chat settings are discarded while other launcher settings survive", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-saved-chat-state-"));
   const file = path.join(root, "state.json");
   try {
-    assert.equal(createStateStore(file).read().useSavedChats, true);
-    fs.writeFileSync(file, JSON.stringify({ version: 1 }));
-    const store = createStateStore(file);
-    assert.equal(store.read().useSavedChats, true);
-    store.update({ useSavedChats: false });
-    assert.equal(createStateStore(file).read().useSavedChats, false);
+    const original = { ...createStateStore(file).read(), language: "ja", composerPredictionsEnabled: false,
+      experimentalFreshConversationPerTurn: true, autoStart: false };
+    assert.equal(Object.hasOwn(original, "useSavedChats"), false);
+    for (const useSavedChats of [undefined, false, true, "retired-value"]) {
+      fs.writeFileSync(file, JSON.stringify({ ...original, useSavedChats }));
+      const store = createStateStore(file);
+      assert.deepEqual(store.read(), original);
+      store.update({});
+      assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), original);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("legacy saved-chat choice migrates once and an explicit Temporary Chat setting wins", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chat-migration-"));
+  const file = path.join(root, "state.json");
+  try {
+    for (const useSavedChats of [true, false]) {
+      fs.writeFileSync(file, JSON.stringify({ version: 1, useSavedChats }));
+      const store = createStateStore(file);
+      assert.equal(store.read().useTemporaryChats, !useSavedChats);
+      store.update({});
+      assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(file, "utf8")), "useSavedChats"), false);
+      assert.equal(createStateStore(file).read().useTemporaryChats, !useSavedChats);
+      fs.writeFileSync(file, JSON.stringify({ version: 1, useSavedChats, useTemporaryChats: useSavedChats }));
+      assert.equal(createStateStore(file).read().useTemporaryChats, useSavedChats);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("UTF-8 settings keep explicit choices with or without a byte order mark", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-utf8-state-"));
+  const file = path.join(root, "state.json");
+  try {
+    const expected = createStateStore(file).update({
+      coreSetupComplete: true,
+      autoStart: false,
+      useTemporaryChats: false,
+      browserInteractionMode: "manual",
+      browserSmokeVersion: "6.1.14\uFEFF-test",
+    });
+    for (const prefix of ["", "\uFEFF"]) {
+      const contents = prefix + JSON.stringify(expected);
+      fs.writeFileSync(file, contents);
+      assert.deepEqual(createStateStore(file).read(), expected);
+      assert.equal(fs.readFileSync(file, "utf8"), contents);
+    }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -54,7 +97,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       composerPredictionsEnabled: true,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useSavedChats: true,
+      useTemporaryChats: true,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,
@@ -85,7 +128,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       composerPredictionsEnabled: true,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useSavedChats: true,
+      useTemporaryChats: true,
       zeroRiskProEnabled: false,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
@@ -167,7 +210,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       composerPredictionsEnabled: true,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useSavedChats: true,
+      useTemporaryChats: true,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,

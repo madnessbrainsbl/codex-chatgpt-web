@@ -7,7 +7,7 @@ const config = loadConfig();
 const state = resolve(import.meta.dir, "../.text-tools-live");
 process.env.CODEX_CHATGPT_WEB_HOME = state;
 startServer({
-  ...config, mode: "browser-only", toolTransport: "text", useSavedChats: false,
+  ...config, mode: "browser-only", toolTransport: "text", useTemporaryChats: true,
   port: 17842, brokerSocketPath: defaultBrokerEndpoint(state),
   experimentalBiggerContext: config.experimentalBiggerContext,
 });

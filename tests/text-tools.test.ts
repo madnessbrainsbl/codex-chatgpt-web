@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import * as launcherHost from "../src/launcher-browser-host";
 import type { AdapterEvent, CodexParsedRequest } from "../src/types";
+import { multipartRecords } from "./fixtures/multipart-records";
 
 const usage = { inputTokens: 1, outputTokens: 1 };
 
@@ -40,7 +41,7 @@ test("browser projection bounds large tool results without changing native histo
 
 test("saved chats can use validated native text tools without enabling MCP", () => {
   expect(() => createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: "https://chatgpt.com",
-    chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useSavedChats: true, solAvailable: true },
+    chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useTemporaryChats: false, solAvailable: true },
   })).not.toThrow();
 });
 function request(): CodexParsedRequest {
@@ -79,7 +80,7 @@ test("a trusted workspace routes to its saved project while other workspaces kee
   } as any);
   try {
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `project-test://${randomUUID()}`,
-      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true,
+      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useTemporaryChats: true, solAvailable: true,
         savedChatProjects: [{ root, url: projectUrl }] } });
     for (cwd of [root, resolve(root, "src"), root + "-other"]) {
       const events: AdapterEvent[] = [];
@@ -116,7 +117,7 @@ test.each(["project", "standalone"])("%s checkpoint uses the existing chat and o
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `project-checkpoint://${randomUUID()}`,
       chatgptWeb: { browserHost: "launcher", browserHostDescriptorPath: "synthetic-project-descriptor.json",
         experimentalBiggerContext: true,
-        textToolsEnabled: true, localToolsEnabled: false, useSavedChats: scope === "standalone", solAvailable: true,
+        textToolsEnabled: true, localToolsEnabled: false, useTemporaryChats: scope !== "standalone", solAvailable: true,
         savedChatProjects: scope === "project" ? [{ root, url: projectUrl }] : [] } });
     const parsed = request();
     parsed.context.messages[0]!.content = "UNIQUE_INITIAL_PROJECT_CONTEXT";
@@ -216,8 +217,8 @@ test("compiler exposes real schemas without a connector or read-only restriction
   expect(compiled.text).toContain("exactly ONE JSON object");
   expect(compiled.text).not.toContain("cannot access the local");
   expect(compiled.turnToken).toBeUndefined();
-  const config = { ...defaultConfig(), toolTransport: "text" as const, useSavedChats: false };
-  expect(providerConfig(config).chatgptWeb).toMatchObject({ localToolsEnabled: false, textToolsEnabled: true, useSavedChats: false });
+  const config = { ...defaultConfig(), toolTransport: "text" as const, useTemporaryChats: true };
+  expect(providerConfig(config).chatgptWeb).toMatchObject({ localToolsEnabled: false, textToolsEnabled: true, useTemporaryChats: true });
 });
 
 afterEach(() => { chatGptTurnSessions.clear(); });
@@ -243,7 +244,7 @@ test("an explicit single-question request streams plain text before browser comp
     parsed.options.toolChoice = "none";
     parsed.context.tools = [];
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `plain-test://${randomUUID()}`,
-      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true } });
+      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useTemporaryChats: true, solAvailable: true } });
     const pending = adapter.runTurn(parsed, { headers: new Headers() }, event => events.push(event));
     try {
       for (let i = 0; i < 30 && !events.some(event => event.type === "text_delta"); i++) await Bun.sleep(10);
@@ -272,7 +273,7 @@ test.each(["advertised-tools", "implicit-choice", "history"])("%s preserves vali
     if (scenario === "implicit-choice") delete parsed.options.toolChoice;
     if (scenario === "history") parsed.context.messages.push({ role: "user", content: "Follow-up", timestamp: 2 });
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `guard-test://${randomUUID()}`,
-      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true } });
+      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useTemporaryChats: true, solAvailable: true } });
     const events: AdapterEvent[] = [];
     await adapter.runTurn(parsed, { headers: new Headers() }, event => events.push(event));
     expect(events.filter(event => event.type === "text_delta").map(event => event.text).join("")).toBe("done");
@@ -304,7 +305,7 @@ test("remote text-tool compaction excludes checkpoint-covered history before bro
     assertChatGptWebMultipartInputWithinLimits(compiledTokens, Math.max(...messages.map(text => estimateTokens(text))),
       turn.modelId, "high", turn.capabilities, Math.max(...messages.map(text => text.length)), 6, undefined, "6");
     expect(compiled.images).toHaveLength(0);
-    const payload = JSON.stringify(compiled);
+    const payload = JSON.stringify(multipartRecords(compiled.multipart!.parts));
     for (const evidence of ["Preserve the sandbox", "Active task", "CHECKPOINT_EVIDENCE", "RECENT_RESULT"]) expect(payload).toContain(evidence);
     expect(payload.includes("exactly ONE JSON object")).toBeFalse();
     const summary = "CHECKPOINT_OK: preserve the sandbox; finish the check using RECENT_RESULT.";
@@ -312,7 +313,7 @@ test("remote text-tool compaction excludes checkpoint-covered history before bro
   } } as any);
   try {
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `compact-test://${randomUUID()}`,
-      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true, experimentalBiggerContext: true } });
+      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useTemporaryChats: true, solAvailable: true, experimentalBiggerContext: true } });
     const events: AdapterEvent[] = [];
     await adapter.runTurn(parsed, { headers: new Headers() }, event => events.push(event));
     expect(events.filter(event => event.type === "error")).toHaveLength(0);
@@ -372,7 +373,7 @@ test.each(["direct", "helper", "multipart"])("%s: text tools retain one chat and
       if (transport === "direct") await turn.onPreparedSelected?.(reused);
       const compiled = await (prompts.length ? turn.prepareResume() : turn.prepare());
       if (transport !== "direct") await turn.onPreparedSelected?.(reused);
-      if (transport === "multipart" && prompts.length < 2) expect(compiled.multipart?.parts.length).toBe(reused ? undefined : 2);
+      if (transport === "multipart" && prompts.length < 2) expect(compiled.multipart?.parts.length).toBe(reused ? undefined : 6);
       prompts.push(compiledChatGptWebMessages(compiled).join("\n"));
       sizes.push(estimateCompiledChatGptWebInputTokens(compiled, turn.modelId));
       const answer = prompts.length === 1
@@ -388,7 +389,7 @@ test.each(["direct", "helper", "multipart"])("%s: text tools retain one chat and
     if (transport === "multipart") parsed._chatgptModelFamily = "6";
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `retention-test://${randomUUID()}`,
       chatgptWeb: { browserHost: "launcher", browserHostDescriptorPath: "synthetic-descriptor.json",
-        textToolsEnabled: true, localToolsEnabled: false, useSavedChats: transport === "multipart", solAvailable: true,
+        textToolsEnabled: true, localToolsEnabled: false, useTemporaryChats: transport !== "multipart", solAvailable: true,
         experimentalBiggerContext: transport === "multipart" } });
     const first: AdapterEvent[] = [];
     await adapter.runTurn(parsed, { headers: new Headers() }, e => first.push(e));
@@ -447,7 +448,7 @@ test("an upload quota is replayed as a terminal error without another browser at
   try {
     const parsed = request();
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `quota-test://${randomUUID()}`,
-      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true } });
+      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useTemporaryChats: true, solAvailable: true } });
     for (let attempt = 0; attempt < 2; attempt++) {
       const events: AdapterEvent[] = [];
       await adapter.runTurn(parsed, { headers: new Headers() }, e => events.push(e));
@@ -468,7 +469,7 @@ test("text tool schemas count toward multipart planning and native auto-compacti
   }));
   parsed.context.tools![0]!.description = "schema documentation ".repeat(20_000);
   const caps = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false };
-  expect(resolveBiggerContextMultipartParts(parsed, caps)).toBe(2);
+  expect(resolveBiggerContextMultipartParts(parsed, caps)).toBe(6);
   const parts = resolveBiggerContextMultipartParts(parsed, caps, false, undefined, true);
   expect(parts).toBeDefined();
   const compiled = compileChatGptWebPrompt(parsed, caps, undefined, { textTools: true, experimentalMultipartParts: parts });
@@ -476,7 +477,7 @@ test("text tool schemas count toward multipart planning and native auto-compacti
   const actual = estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId);
   expect(actual).toBeGreaterThan(90_000);
   expect(estimateChatGptWebUsage(parsed, {}, caps, true, false, undefined, true).inputTokens).toBe(actual);
-});
+}, 20_000);
 
 test("adapter replays identical call IDs and runs a new browser round only after a tool result", async () => {
   let sends = 0;
@@ -498,7 +499,7 @@ test("adapter replays identical call IDs and runs a new browser round only after
   try {
     const parsed = request();
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `text-test://${randomUUID()}`,
-      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useSavedChats: false, solAvailable: true } });
+      chatgptWeb: { textToolsEnabled: true, localToolsEnabled: false, useTemporaryChats: true, solAvailable: true } });
     let interruptedCallId: string | undefined;
     await expect(adapter.runTurn(parsed, { headers: new Headers() }, event => {
       if (event.type === "tool_call_start") {

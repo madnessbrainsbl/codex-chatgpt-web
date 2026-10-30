@@ -4,8 +4,8 @@ import { chatGptUsageModelFromAnnouncements } from "../src/adapters/chatgpt-web/
 
 test("model selection recognizes Latest in the launcher languages without accepting other model names", async () => {
   for (const [label, accepted] of [
-    ["Latest", true], ["最新", true], ["최신", true], ["GPT-6 Pro", true], ["6", true],
-    ["GPT-5.6 Sol", false], ["GPT-7 Pro", false], ["Latest preview", false],
+    ["Latest", true], ["最新", true], ["최신", true], ["GPT-6 Pro", true], ["6", true], ["GPT-6 Sol", true],
+    ["GPT-5.6 Sol", false], ["GPT-6.1 Sol", false], ["GPT-7 Pro", false], ["Latest preview", false],
   ] as const) {
     const menu = { menu: {
       getByRole: (_role: string, options: { name: RegExp }) => ({
@@ -36,6 +36,30 @@ test("family confirmation verifies the exact Sol or Pro version, including the o
   }
   expect(chatGptModelFamilyMatches(["6 Pro, 5 of 5."], "5.6", "max")).toBe(false);
   expect(chatGptModelFamilyMatches(["6 Pro, 5 of 5."], "6", "xhigh")).toBe(false);
+});
+
+test("explicit Astra Max verifies the requested Pro route without accepting Ultra or another model", () => {
+  expect(chatGptModelFamilyMatches(["6 Astra Max"], "6", "max")).toBeTrue();
+  expect(chatGptUsageModelFromAnnouncements(["6 Astra Max"])).toBe("gpt-6-pro");
+  for (const description of ["6 Astra Ultra", "6 Astra High", "6 Sol Max", "6.1 Astra Max", "6 Max"]) {
+    expect(chatGptModelFamilyMatches([description], "6", "max")).toBeFalse();
+    expect(chatGptUsageModelFromAnnouncements([description])).toBe("pro-unknown");
+  }
+});
+
+test("Simplified Chinese effort announcements preserve exact model and effort verification (#911)", () => {
+  for (const [label, effort] of [["即时", "low"], ["中", "medium"], ["高", "high"]] as const) {
+    expect(chatGptModelFamilyMatches([`GPT-6 Sol ${label}，第 3 项，共 3 项`, `6 ${label}`], "6", effort)).toBeTrue();
+    expect(chatGptModelFamilyMatches([`5.6 ${label}`], "6", effort)).toBeFalse();
+    expect(chatGptModelFamilyMatches([`6 Astra ${label}`], "6", effort)).toBeFalse();
+    expect(chatGptModelFamilyMatches([`6 ${label}`, "6 Pro"], "6", effort)).toBeFalse();
+  }
+  for (const effort of ["low", "medium", "xhigh", "max"] as const) {
+    expect(chatGptModelFamilyMatches(["6 高"], "6", effort)).toBeFalse();
+  }
+  for (const label of ["超高", "高级", "高 reasoning", "高 6.1"]) {
+    expect(chatGptModelFamilyMatches([`6 ${label}`], "6", "high")).toBeFalse();
+  }
 });
 
 

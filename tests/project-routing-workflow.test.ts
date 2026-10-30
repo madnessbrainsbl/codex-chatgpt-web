@@ -23,7 +23,7 @@ test("unbound projects ask once, persist an explicit reply, and continue the ori
   let sends = 0;
   const url = "https://chatgpt.com/g/g-p-0123456789abcdef0123456789abcdef-example/project";
   const browser = spyOn(ChatGptBrowserWorker, "forProvider").mockImplementation((provider: any) => {
-    expect(provider.chatgptWeb.useSavedChats).toBeFalse();
+    expect(provider.chatgptWeb.useTemporaryChats).toBeTrue();
     return { appName: "Codex Native2", async run(turn: any) {
       sends++;
       expect(turn.projectUrl).toBe(url);
@@ -36,7 +36,7 @@ test("unbound projects ask once, persist an explicit reply, and continue the ori
   try {
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `routing-workflow://${id}`,
       chatgptWeb: { projectChatRouting: true, nativeProjectStatePath: statePath, projectRoutingConfigPath: configPath,
-        textToolsEnabled: true, useSavedChats: false, solAvailable: true, localToolsEnabled: false } } as any);
+        textToolsEnabled: true, useTemporaryChats: true, solAvailable: true, localToolsEnabled: false } } as any);
     const parsed: any = { modelId: "gpt-5.6-sol", options: { reasoning: "high" }, context: {
       messages: [{ role: "user", content: "ORIGINAL_TASK", timestamp: 1 }], tools: [] },
       _rawBody: { client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: id, turn_id: id }) },
@@ -84,7 +84,7 @@ test.each(["standalone", "bound", "native-chatgpt", "compaction-unbound", "unsol
   });
   let sends = 0;
   const browser = spyOn(ChatGptBrowserWorker, "forProvider").mockImplementation((provider: any) => {
-    expect(provider.chatgptWeb.useSavedChats).toBeFalse();
+    expect(provider.chatgptWeb.useTemporaryChats).toBeTrue();
     expect(provider.chatgptWeb.experimentalFreshConversationPerTurn).toBeFalse();
     return { appName: "Codex Native2", async run(turn: any) {
       sends++;
@@ -95,7 +95,7 @@ test.each(["standalone", "bound", "native-chatgpt", "compaction-unbound", "unsol
   try {
     const adapter = createChatGptWebAdapter({ adapter: "chatgpt-web", baseUrl: `routing-scope://${id}`,
       chatgptWeb: { projectChatRouting: true, nativeProjectStatePath: statePath, projectRoutingConfigPath: configPath,
-        textToolsEnabled: true, useSavedChats: false, experimentalFreshConversationPerTurn: true, solAvailable: true } } as any);
+        textToolsEnabled: true, useTemporaryChats: true, experimentalFreshConversationPerTurn: true, solAvailable: true } } as any);
     const content = scenario === "unsolicited-link" ? url : "Inspect the workspace";
     const parsed: any = { modelId: "gpt-5.6-sol", options: {}, _compactionRequest: scenario === "compaction-unbound",
       context: { messages: [{ role: "user", content, timestamp: 1 }], tools: [{ name: "unused", parameters: {} }] },

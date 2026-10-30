@@ -123,7 +123,7 @@ export interface AppConfig {
   composerPredictionsEnabled: boolean;
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
-  useSavedChats: boolean;
+  useTemporaryChats: boolean;
   savedChatProjects?: SavedChatProject[];
   projectChatRouting?: boolean;
   toolTransport?: "mcp" | "text";
@@ -260,7 +260,8 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     composerPredictionsEnabled: true,
     experimentalSkillAttachments: false,
     experimentalFreshConversationPerTurn: false,
-    useSavedChats: true,
+    useTemporaryChats: true,
+    savedChatProjects: [],
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
@@ -415,7 +416,12 @@ export function loadConfigForSetup(): AppConfig {
 
 function parseConfig(value: unknown, path: string): AppConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid configuration object in ${path}`);
-  const parsed = value as Partial<AppConfig>;
+  const parsed = { ...value } as Partial<AppConfig> & { useSavedChats?: unknown };
+  // Preserve the custom runtime's legacy preference when the new setting is absent.
+  if (parsed.useTemporaryChats === undefined && typeof parsed.useSavedChats === "boolean") {
+    parsed.useTemporaryChats = !parsed.useSavedChats;
+  }
+  delete parsed.useSavedChats;
   if (parsed.version !== 3) throw new Error(`Unsupported configuration version in ${path}; rerun setup to migrate it`);
   if (parsed.purpose !== undefined && parsed.purpose !== "dev-harness") {
     throw new Error(`Invalid configuration purpose in ${path}`);
@@ -554,6 +560,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.experimentalSkillAttachments !== undefined && typeof parsed.experimentalSkillAttachments !== "boolean") {
     throw new Error(`Invalid experimentalSkillAttachments in ${path}`);
   }
+  if (parsed.useTemporaryChats !== undefined && typeof parsed.useTemporaryChats !== "boolean") {
+    throw new Error(`Invalid useTemporaryChats in ${path}`);
+  }
   const experimentalSkillAttachments = parsed.experimentalSkillAttachments === true;
   if (parsed.composerPredictionsEnabled !== undefined && typeof parsed.composerPredictionsEnabled !== "boolean") {
     throw new Error(`Invalid composerPredictionsEnabled in ${path}`);
@@ -564,10 +573,6 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid experimentalFreshConversationPerTurn in ${path}`);
   }
   const experimentalFreshConversationPerTurn = parsed.projectChatRouting !== true && parsed.experimentalFreshConversationPerTurn === true;
-  if (parsed.useSavedChats !== undefined && typeof parsed.useSavedChats !== "boolean") {
-    throw new Error(`Invalid useSavedChats in ${path}`);
-  }
-  const useSavedChats = parsed.projectChatRouting !== true && parsed.useSavedChats !== false;
   const savedChatProjects = validateSavedChatProjects(parsed.savedChatProjects);
   if (parsed.projectChatRouting !== undefined && typeof parsed.projectChatRouting !== "boolean") {
     throw new Error(`Invalid projectChatRouting in ${path}`);
@@ -608,7 +613,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     composerPredictionsEnabled,
     experimentalSkillAttachments,
     experimentalFreshConversationPerTurn,
-    useSavedChats,
+    useTemporaryChats: parsed.projectChatRouting === true || parsed.useTemporaryChats !== false,
     savedChatProjects,
     zeroRiskProEnabled,
   } as AppConfig;
@@ -668,7 +673,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       experimentalBiggerContext: manual ? false : config.experimentalBiggerContext,
       experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       experimentalFreshConversationPerTurn: !manual && config.experimentalFreshConversationPerTurn === true,
-      useSavedChats: config.useSavedChats === true,
+      useTemporaryChats: config.useTemporaryChats,
       savedChatProjects: config.savedChatProjects,
       projectChatRouting: config.projectChatRouting === true,
       projectRoutingConfigPath: getConfigPath(),

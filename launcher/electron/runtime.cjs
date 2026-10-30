@@ -1276,11 +1276,11 @@ class RuntimeHost {
     return { ...result, enabled };
   }
 
-  async setUseSavedChats(enabled) {
-    if (typeof enabled !== "boolean") throw new Error("Saved chat preference must be a boolean");
+  async setTemporaryChats(enabled) {
+    if (typeof enabled !== "boolean") throw new Error("Temporary Chat preference must be a boolean");
     const current = this.runtimeConfigSnapshot();
-    if (current.config?.projectChatRouting && enabled) throw new Error("Project routing keeps standalone chats temporary; project chats are saved in their bound project");
-    if (!current.configured) throw new Error("Initialize the runtime before changing saved chats");
+    if (current.config?.projectChatRouting && !enabled) throw new Error("Project routing keeps standalone chats temporary; project chats are saved in their bound project");
+    if (!current.configured) throw new Error("Initialize the runtime before changing Temporary Chat");
     const development = this.launcherProfile === "development";
     const args = [
       ...(development ? ["dev", "setup"] : ["setup"]),
@@ -1289,17 +1289,17 @@ class RuntimeHost {
       ...this.browserInteractionArgs(),
       "--acknowledge-unofficial",
       ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
-      enabled ? "--saved-chats" : "--temporary-chats",
+      enabled ? "--temporary-chats" : "--ordinary-chats",
     ];
-    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    if (!development && current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const options = {
-      message: enabled ? "Enabling saved ChatGPT conversations" : "Restoring Temporary Chat",
-      successMessage: enabled ? "Saved ChatGPT conversations enabled" : "Temporary Chat restored",
+      message: enabled ? "Enabling Temporary Chat" : "Restoring ordinary chats",
+      successMessage: enabled ? "Temporary Chat enabled" : "Ordinary chats restored",
       timeoutMs: CORE_SETUP_TIMEOUT_MS,
     };
     const result = development
-      ? await this.runDevSetup("use-saved-chats", args, options)
-      : await this.runSetup("use-saved-chats", args, options);
+      ? await this.runDevSetup("temporary-chats", args, options)
+      : await this.runSetup("temporary-chats", args, options);
     return { ...result, enabled };
   }
 

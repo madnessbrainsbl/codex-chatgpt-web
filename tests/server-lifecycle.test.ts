@@ -1174,6 +1174,9 @@ test("health proves that Codex received a successful augmented model catalog", a
     expect(await (await fetch(`${endpoint}/healthz`)).json()).toMatchObject({
       successful_model_catalog_requests: 0,
       last_successful_model_catalog_request_at: null,
+      use_temporary_chats: true,
+      use_saved_chats: false,
+      tool_transport: "mcp",
     });
 
     const models = await fetch(`${endpoint}/v1/models`, {

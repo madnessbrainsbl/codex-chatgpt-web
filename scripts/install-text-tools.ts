@@ -59,11 +59,11 @@ try {
   const left = JSON.parse(readFileSync(join(installed, "manifest.json"), "utf8"));
   const right = JSON.parse(readFileSync(join(embedded, "manifest.json"), "utf8"));
   if (left.bundleId !== right.bundleId) throw Error("Installed and packaged bundle identities differ");
-  if (config.toolTransport !== "text" || config.useSavedChats) {
-    saveConfig({ ...config, toolTransport: "text", useSavedChats: false });
+  if (config.toolTransport !== "text" || !config.useTemporaryChats) {
+    saveConfig({ ...config, toolTransport: "text", useTemporaryChats: true });
   }
   if (!existsSync(getConfigPath()) || loadConfig().toolTransport !== "text") throw Error("Config verification failed");
-  console.log(JSON.stringify({ installed: true, useSavedChats: false, backup,
+  console.log(JSON.stringify({ installed: true, useTemporaryChats: true, backup,
     files: files.map(file => ({ name: file.name, sha256: hash(file.data) })) }));
 } catch (error) {
   for (const [index, target] of targets.entries()) {

@@ -70,12 +70,27 @@ function launcherConfig(descriptorPath, overrides = {}) {
 
 test("project routing keeps standalone chats temporary without rewriting the private preferences", () => {
   const descriptor = path.join(os.tmpdir(), "project-routing-launcher.json");
-  const input = launcherConfig(descriptor, { projectChatRouting: true, useSavedChats: false, experimentalFreshConversationPerTurn: true });
+  const input = launcherConfig(descriptor, { projectChatRouting: true, useTemporaryChats: true, experimentalFreshConversationPerTurn: true });
   const normalized = validateConfig(input, descriptor);
-  assert.equal(normalized.useSavedChats, false);
+  assert.equal(normalized.useTemporaryChats, true);
   assert.equal(normalized.experimentalFreshConversationPerTurn, false);
-  assert.equal(input.useSavedChats, false);
+  assert.equal(input.useTemporaryChats, true);
   assert.throws(() => validateConfig({ ...input, projectChatRouting: "true" }, descriptor), /invalid projectChatRouting/);
+});
+
+test("launcher runtime snapshots migrate legacy chat choice without mutating private configuration", () => {
+  const descriptor = path.join(os.tmpdir(), "legacy-chat-launcher.json");
+  for (const useSavedChats of [true, false]) {
+    const input = launcherConfig(descriptor, { useSavedChats });
+    const normalized = validateConfig(input, descriptor);
+    assert.equal(normalized.useTemporaryChats, !useSavedChats);
+    assert.equal(Object.hasOwn(normalized, "useSavedChats"), false);
+    assert.equal(input.useSavedChats, useSavedChats);
+    assert.equal(Object.hasOwn(input, "useTemporaryChats"), false);
+    assert.equal(validateConfig({ ...input, useTemporaryChats: useSavedChats }, descriptor).useTemporaryChats, useSavedChats);
+    assert.equal(validateConfig({ ...input, projectChatRouting: true }, descriptor).useTemporaryChats, true);
+  }
+  assert.throws(() => validateConfig(launcherConfig(descriptor, { useTemporaryChats: "true" }), descriptor), /invalid useTemporaryChats/);
 });
 
 test("packaged runtime paths are native on Windows and Unix", () => {
@@ -1382,6 +1397,95 @@ test("launcher supervisor refuses shutdown while a Codex turn is active and comp
   assert.deepEqual(actions, ["drain", "resume"]);
 });
 
+for (const failure of ["active-turn", "unverified-pid", "shutdown-error"]) {
+  test(`ownership write failure preserves the runtime when cleanup is unsafe: ${failure}`, async () => {
+    const operations = [];
+    const supervisor = new RuntimeSupervisor({
+      app: { getVersion: () => "0.2.0", isPackaged: false },
+      logger: { info() {}, warn() {}, error() {} },
+      sourceRoot: os.tmpdir(), coreHome: os.tmpdir(),
+      browserDescriptorPath: path.join(os.tmpdir(), "launcher.json"),
+      publishOperation: value => operations.push(value),
+    });
+    const daemon = supervisor.daemon = { pid: 123_456_783, exitCode: null, signalCode: null };
+    const tunnel = supervisor.tunnel = { pid: 123_456_784, managed: true };
+    supervisor.readConfig = () => ({ mode: "full" });
+    supervisor.writeState = () => { throw new Error("disk full"); };
+    supervisor.proxyHealth = async (_config, _timeout, pid) => {
+      assert.equal(pid, daemon.pid);
+      return failure !== "unverified-pid";
+    };
+    const actions = [];
+    supervisor.control = async (_config, action) => {
+      actions.push(action);
+      return { status: "ok", accepting_turns: action === "resume",
+        active_http_turns: failure === "active-turn" ? 1 : 0, active_browser_turns: 0 };
+    };
+    const drain = supervisor.acquireDrain.bind(supervisor);
+    supervisor.acquireDrain = config => drain(config, 0);
+    supervisor.shutdownDaemon = async () => { throw new Error("shutdown unavailable"); };
+    supervisor.stopChild = async () => { assert.fail("must not force-kill an unverified or active daemon"); };
+    supervisor.stopTunnelGracefully = async () => { assert.fail("must preserve the tunnel if the daemon cannot stop"); };
+    assert.equal(supervisor.tryWriteState("degraded"), false);
+    await supervisor.stateWriteCleanup;
+    assert.equal(supervisor.daemon, daemon);
+    assert.equal(supervisor.tunnel, tunnel);
+    assert.equal(supervisor.stopping, true);
+    assert.deepEqual(actions, failure === "unverified-pid" ? [] : ["drain", "resume"]);
+    assert.match(operations.at(-1).message, /owned runtime cleanup failed/);
+    await assert.rejects(supervisor.startIfConfigured(), /owned runtime cleanup failed/);
+  });
+}
+
+test("ownership cleanup waits for in-flight recovery and prevents overlapping starts", async () => {
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: os.tmpdir(), coreHome: os.tmpdir(),
+    browserDescriptorPath: path.join(os.tmpdir(), "launcher.json"),
+  });
+  const pending = () => {
+    let resolve;
+    const promise = new Promise(done => { resolve = done; });
+    return { promise, resolve };
+  };
+  const recovery = pending();
+  const cleanup = pending();
+  const stopping = pending();
+  supervisor.recoveryTasks.add(recovery.promise);
+  supervisor.tunnel = { pid: 123_456_783, managed: true };
+  supervisor.readConfig = () => ({ mode: "full" });
+  supervisor.writeState = () => { throw new Error("disk full"); };
+  let stops = 0;
+  supervisor.stopTunnelGracefully = async () => {
+    stops += 1;
+    stopping.resolve();
+    await cleanup.promise;
+    supervisor.tunnel = null;
+    supervisor.tryWriteState("stopping");
+  };
+  let starts = 0;
+  supervisor.startConfigured = async () => { starts += 1; return { status: "ready" }; };
+  assert.equal(supervisor.tryWriteState("degraded"), false);
+  const failedStart = assert.rejects(supervisor.startIfConfigured(), /disk full/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(stops, 0);
+  recovery.resolve();
+  await stopping.promise;
+  assert.equal(starts, 0);
+  assert.equal(supervisor.tryWriteState("degraded"), false);
+  const cleanupTask = supervisor.stateWriteCleanup;
+  cleanup.resolve();
+  await cleanupTask;
+  await failedStart;
+  assert.equal(stops, 1);
+  assert.equal(starts, 0);
+  supervisor.writeState = () => {};
+  assert.deepEqual(await supervisor.startIfConfigured(), { status: "ready" });
+  assert.equal(starts, 1);
+  assert.equal(supervisor.stateWriteFailure, null);
+});
+
 test("launcher supervisor waits for an in-flight HTTP turn to finish after draining", async () => {
   const actions = [];
   const supervisor = new RuntimeSupervisor({
@@ -1948,6 +2052,26 @@ process.once("SIGTERM", () => server.close(() => process.exit(0)));
     assert.equal(stopped.status, "stopped");
     assert.equal(fs.existsSync(path.join(root, "runtime", "launcher-supervisor.json")), false);
     assert.equal(records.some((record) => record.event === "runtime.daemon_started"), true);
+
+    // A real filesystem write error must stop the idle child, and block new
+    // starts until ownership can be persisted again.
+    await supervisor.startIfConfigured();
+    const child = supervisor.daemon;
+    const statePath = supervisor.statePath;
+    const blocker = path.join(root, "not-a-directory");
+    fs.writeFileSync(blocker, "blocked");
+    supervisor.statePath = path.join(blocker, "state.json");
+    try {
+      assert.equal(supervisor.tryWriteState("ready"), false);
+      await supervisor.stateWriteCleanup;
+      assert.equal(supervisor.daemon, null);
+      assert.notEqual(child.exitCode, null);
+      assert.equal(supervisor.stopping, true);
+      await assert.rejects(supervisor.startIfConfigured(), /ENOTDIR|EEXIST/);
+    } finally {
+      supervisor.statePath = statePath;
+    }
+    assert.equal((await supervisor.startIfConfigured()).status, "ready");
   } finally {
     await supervisor.stopForSetup().catch(() => {});
     fs.rmSync(root, { recursive: true, force: true });

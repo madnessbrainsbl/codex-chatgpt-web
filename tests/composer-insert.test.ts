@@ -181,7 +181,8 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a selected connector never a
     const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
       config: { appName: "Codex Native2" },
     });
-    const prompt = "Task context\n".repeat(5_000) + "\nrequest_id: current";
+    // Match the transport's JSON-encoded history instead of creating 5,000 raw editor paragraphs.
+    const prompt = "Task context\n" + JSON.stringify({ text: "Task context\n".repeat(5_000), request_id: "current" });
     for (const modern of [false, true]) {
       const pill = modern
         ? '<span app-mention-path="app://fixture" app-mention-display-name="Codex Native2" contenteditable="false">Codex Native2</span>'

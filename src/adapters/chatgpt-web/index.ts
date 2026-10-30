@@ -309,8 +309,27 @@ function replayEvents(events: AdapterEvent[], emit: (event: AdapterEvent) => voi
   for (const event of events) emit(event);
 }
 
-function submittedTurnFailure(session: ChatGptTurnSession, error: unknown): Error {
+function submittedTurnFailure(session: ChatGptTurnSession, error: unknown, parsed: CodexParsedRequest): Error {
   const normalized = error instanceof Error ? error : new Error(String(error));
+  if (normalized instanceof ChatGptWebAdapterError && normalized.code === "chatgpt_delivery_timeout"
+    && session.runtime.mode === "tools") {
+    // Retiring the old MCP binding cannot undo commands already dispatched to Codex.
+    // A result may arrive after the browser has failed. Its canonical native record proves
+    // completion without forwarding it to the retired browser or replaying the command.
+    const results = parsed.context.messages.filter((message): message is CodexToolResultMessage =>
+      message.role === "toolResult" && session.hasOutstanding(message.toolCallId));
+    const returnedIds = new Set(results.map(result => result.toolCallId));
+    const unresolved = session.outstanding().some(call => !returnedIds.has(call.callId))
+      || session.runtime.externalProgress.snapshot().activeToolCalls > returnedIds.size
+      || results.length !== returnedIds.size;
+    if (unresolved) {
+      return new ChatGptWebAdapterError(
+        "ChatGPT reported that message delivery timed out while a tool result was still pending. "
+        + "Check the running command and its result before continuing.",
+        { status: normalized.status, errorType: normalized.errorType, code: normalized.code, retryable: false, cause: normalized },
+      );
+    }
+  }
   if (normalized instanceof ChatGptWebAdapterError) return normalized;
   const phase = session.runtime.submission?.phase;
   if (!phase || phase === "prepared") return normalized;
@@ -360,9 +379,9 @@ export function createChatGptWebAdapter(
 ): ProviderAdapter {
   const projectChatRouting = provider.chatgptWeb?.projectChatRouting === true;
   if (projectChatRouting) {
-    provider = { ...provider, chatgptWeb: { ...provider.chatgptWeb, useSavedChats: false, experimentalFreshConversationPerTurn: false } };
+    provider = { ...provider, chatgptWeb: { ...provider.chatgptWeb, useTemporaryChats: true, experimentalFreshConversationPerTurn: false } };
   }
-  const savedChats = provider.chatgptWeb?.useSavedChats === true;
+  const savedChats = provider.chatgptWeb?.useTemporaryChats === false;
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = dependencies.broker ?? TurnBroker.forSocket(brokerSocketPath(provider));
   const zeroRiskManualControl = dependencies.zeroRiskManualControl ?? launcherZeroRiskManualControl;
@@ -505,6 +524,7 @@ export function createChatGptWebAdapter(
         textTools,
         projectSetupCompleted: routing?.setupCompleted === true && !input._compactionRequest,
         textToolContinuation: input === resumeInput && textToolContinuation,
+        includeContextTokenBreakdown: true,
         captureLunaCheckpoint,
         experimentalSkillAttachments,
         ...(experimentalMultipartParts !== undefined
@@ -1649,7 +1669,7 @@ export function createChatGptWebAdapter(
           // Validation and result-delivery failures never enter this branch.
           const settled = awaitingRuntime ? session.settledOutcome() : undefined;
           if (settled?.type === "error") error = settled.error;
-          const turnError = submittedTurnFailure(session, error);
+          const turnError = submittedTurnFailure(session, error, parsed);
           const handledError = turnError instanceof ChatGptWebAdapterError && turnError.retryable
             ? chatGptWebTurnRetryPolicy.recordRetryableFailure(retryKey, turnError)
             : turnError;

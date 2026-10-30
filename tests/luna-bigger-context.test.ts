@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { multipartRecords } from "./fixtures/multipart-records";
 import { estimateTokens } from "../src/lib/token-estimate";
 import { compileChatGptWebPrompt, formatChatGptWebMultipartCommit } from "../src/adapters/chatgpt-web/prompt";
 import { compiledChatGptWebMessages, estimateCompiledChatGptWebInputTokens } from "../src/adapters/chatgpt-web/input-tokens";
@@ -59,11 +60,14 @@ test("Luna multipart preflight bounds the total, each part and final attachments
   })).toThrow("after reserving space for ChatGPT and attachments");
   const parsed = request(1, 25000);
   const compiled = compileChatGptWebPrompt(parsed, caps, undefined, { experimentalMultipartParts: 6 });
-  // Parts cannot turn one oversized native message into silently truncated data.
-  expect(compiled.multipart!.parts.flatMap(part => JSON.parse(part).records).map(record => record.message.content))
+  // Physical fragments must reconstruct the complete native message without truncation.
+  expect(multipartRecords(compiled.multipart!.parts).map(record => record.message.content))
     .toEqual(parsed.context.messages.map(message => message.content));
   const largest = Math.max(...compiledChatGptWebMessages(compiled).map(text => estimateTokens(text)));
   expect(() => assertChatGptWebMultipartInputWithinLimits(50000, largest, model, "low", caps, 150000, 6))
+    .not.toThrow();
+  expect(() => assertChatGptWebMultipartInputWithinLimits(50000,
+    resolveChatGptWebMessageTokenBudget(model, "low", caps) + 1, model, "low", caps, 150000, 6))
     .toThrow("ChatGPT message boundary");
 });
 

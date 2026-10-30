@@ -1,6 +1,6 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "6.1.13",
+  "version": "6.1.17",
   "private": true,
   "description": "Desktop control center for Codex ChatGPT Web",
   "author": "miuuyy",
@@ -31,14 +31,14 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.2.0",
-    "electron": "41.10.7",
+    "electron": "42.11.16",
     "electron-builder": "^26.8.1",
     "typescript": "^5.9.3",
-    "vite": "^6.4.4"
+    "vite": "^6.4.5"
   },
   "overrides": {
     "@xmldom/xmldom": "0.8.15",
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "global-agent": "4.1.3",
     "http-cache-semantics": "4.3.0",
     "source-map-js": "1.2.2"

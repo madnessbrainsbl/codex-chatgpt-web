@@ -9,7 +9,7 @@ const writeStatus = (state: string, extra: Record<string, unknown> = {}) => atom
 let resume: (() => Promise<void>) | undefined;
 try {
   const config = loadConfig();
-  if (config.toolTransport !== "text" || config.useSavedChats) throw Error("Text tools configuration is not installed");
+  if (config.toolTransport !== "text" || !config.useTemporaryChats) throw Error("Text tools configuration is not installed");
   const before = await fetch(`http://127.0.0.1:${config.port}/healthz`, { signal: AbortSignal.timeout(5_000) }).then(r => r.json()) as Record<string, unknown>;
   if (before.service !== "codex-chatgpt-web" || !Number.isInteger(before.pid)) throw Error("The current runtime could not be identified");
   const control = async (operation: "drain" | "resume") => {
@@ -39,15 +39,15 @@ try {
     if (pages.length !== 1) throw Error("Launcher window is ambiguous");
     // Use the launcher's own setup/drain/restart transaction; never kill active processes.
     await pages[0]!.evaluate(async () => {
-      const api = (window as unknown as { codexWebLauncher: { setUseSavedChats(enabled: boolean): Promise<unknown> } }).codexWebLauncher;
-      await api.setUseSavedChats(false);
+      const api = (window as unknown as { codexWebLauncher: { setTemporaryChats(enabled: boolean): Promise<unknown> } }).codexWebLauncher;
+      await api.setTemporaryChats(true);
     });
   } finally { await browser.close(); }
   const health = await fetch(`http://127.0.0.1:${config.port}/healthz`).then(r => r.json()) as Record<string, unknown>;
   if (health.pid === before.pid) throw Error("The launcher did not replace the previous runtime process");
-  if (health.tool_transport !== "text" || health.use_saved_chats !== false) throw Error("The restarted runtime did not enable Temporary Chat text tools");
+  if (health.tool_transport !== "text" || health.use_temporary_chats !== true) throw Error("The restarted runtime did not enable Temporary Chat text tools");
   resume = undefined;
-  writeStatus("ready", { pid: health.pid, useSavedChats: false, toolTransport: "text" });
+  writeStatus("ready", { pid: health.pid, useTemporaryChats: true, toolTransport: "text" });
 } catch (error) {
   let message = error instanceof Error ? error.message : String(error);
   try { await resume?.(); } catch (failure) { message += `; restoring request acceptance failed: ${String(failure)}`; }

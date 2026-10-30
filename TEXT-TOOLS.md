@@ -1,8 +1,13 @@
-# ChatGPT local tools (local patch for 6.1.13)
+# ChatGPT local tools (custom port for 6.1.17)
+
+This port preserves project routing, validated text tools and lossless message
+splitting on upstream tag v6.1.17. Older dated runtime observations below describe
+6.1.13 installations; they are not live-account verification of this port.
 
 ## Project and independent chat workflow
 
-`projectChatRouting: true` enables saved, retained chats for every automatic task.
+`projectChatRouting: true` enables saved, retained chats for project tasks and
+retained Temporary Chats for independent tasks.
 The native Codex sidebar state determines membership, including local projects,
 native ChatGPT projects, explicit independent chats and migrated project IDs.
 Assigned worktrees keep their original project's binding. Native filesystem
@@ -16,17 +21,17 @@ arbitrary project link in task material cannot change it. The original task then
 continues, with native history unchanged. New bindings take effect without a
 daemon restart. A native ChatGPT project assignment already supplies its URL.
 
-An explicitly independent Codex chat gets its own saved ChatGPT conversation,
+An explicitly independent Codex chat gets its own Temporary Chat conversation,
 even if its cwd happens to be inside a bound project. It stays in that chat across
 tool rounds and user replies; context rollover carries its checkpoint to the next
 independent chat. Missing or ambiguous native project records fail closed rather
-than sending data into a guessed project. This mode overrides Temporary Chat and
-fresh-per-turn preferences; disabling it restores those legacy preferences.
+than sending data into a guessed project. This mode forces independent tasks to
+remain temporary and disables fresh-per-turn recreation.
 
 Activation of a newly installed runtime still needs a full launcher/Codex restart.
 The flag is opt-in for existing installations and is restricted to automatic mode.
 
-`toolTransport: "text"`, `useSavedChats: false`, and `mode: "browser-only"` enable a
+`toolTransport: "text"`, `useTemporaryChats: true`, and `mode: "browser-only"` enable a
 connector-free transport. ChatGPT returns one fenced JSON envelope. The adapter
 validates its exact tool name and JSON argument schema, then emits ordinary Codex
 function/custom-tool events. Only Codex executes tools, using its normal sandbox
@@ -54,7 +59,7 @@ Saved project chats are opt-in per local workspace through private `config.json`
 `savedChatProjects: [{ "root": "<absolute workspace path>", "url": "https://chatgpt.com/g/g-p-<project-id>-<name>/project" }]`.
 Bindings use the verified native working directory, with the closest containing
 root winning. They override Temporary Chat only for that workspace; other tasks
-keep `useSavedChats`. Project chats are saved in ChatGPT history. A fresh epoch
+keep `useTemporaryChats`. Project chats are saved in ChatGPT history. A fresh epoch
 starts inside the same project and receives the explicit Codex checkpoint; it
 does not depend on project memory reproducing the previous transcript. Existing
 conversation ownership and delta continuation still apply. Invalid URLs and
