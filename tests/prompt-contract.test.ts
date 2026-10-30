@@ -11,7 +11,8 @@ import {
 } from "../src/adapters/chatgpt-web/prompt";
 import { CHATGPT_WEB_LUNA_MODEL_ID, CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { SUMMARY_PREFIX } from "../src/responses/compaction";
-import { biggerContextPartCount } from "../src/adapters/chatgpt-web/usage";
+import { biggerContextPartCount, resolveBiggerContextMultipartParts } from "../src/adapters/chatgpt-web/usage";
+import { multipartRecords } from "./fixtures/multipart-records";
 import type { CodexParsedRequest } from "../src/types";
 
 function request(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): CodexParsedRequest {
@@ -28,6 +29,31 @@ function request(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): CodexP
     options: { reasoning },
   };
 }
+
+test("Plus plans smaller messages before submitting a context that overfilled a two-part upload", () => {
+  const parsed = request("high");
+  parsed._chatgptModelFamily = "6";
+  parsed.context.systemPrompt = [];
+  parsed.context.messages = [
+    { role: "user", content: "a".repeat(91_000), timestamp: 1 },
+    { role: "user", content: "b".repeat(126_000), timestamp: 2 },
+  ];
+  const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false,
+    proAvailable: false, experimentalBiggerContext: true };
+  const parts = resolveBiggerContextMultipartParts(parsed, capabilities);
+  expect(parts).toBe(6);
+  const compiled = compileChatGptWebPrompt(parsed, capabilities, undefined, { experimentalMultipartParts: parts });
+  const multipart = compiled.multipart!;
+  const transaction = `ctx_${"a".repeat(32)}`;
+  const messages = multipart.parts.map((part, index) => index === multipart.parts.length - 1
+    ? formatChatGptWebMultipartCommit(multipart, transaction)
+    : formatChatGptWebMultipartStage(part, transaction, index + 1, multipart.parts.length).text);
+  expect(Math.max(...messages.map(text => text.length))).toBeLessThanOrEqual(100_000);
+  expect(multipartRecords(multipart.parts)).toEqual(parsed.context.messages.map((message, message_index) => ({
+    kind: "message", message_index, message: { role: message.role, content: message.content },
+  })));
+  expect(compiled.trimmedCompactionMessages).toBeUndefined();
+});
 
 test("custom plugin identity stays explicit in inline and multipart execution without rewriting task history", () => {
   const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
@@ -409,7 +435,7 @@ test("Bigger Context keeps preliminary parts small and preserves all records in 
   compact.context.messages = [
     ...Array.from({ length: 6 }, (_unused, index) => ({
       role: "user" as const,
-      content: `history-${index}-${"x".repeat(100_000)}`,
+      content: `history-${index}-${"x".repeat(75_000)}`,
       timestamp: index + 1,
     })),
     { role: "user", content: "compact now", timestamp: 7 },
@@ -425,9 +451,7 @@ test("Bigger Context keeps preliminary parts small and preserves all records in 
 
   expect(parts).toHaveLength(6);
   expect(parts.flatMap(part => part.records)).toHaveLength(8);
-  expect(Math.max(...multipart.multipart!.parts.slice(0, -1).map(part => part.length))).toBeLessThan(120_000);
-  // The selected High mode can carry a larger final part than an Instant upload.
-  expect(multipart.multipart!.parts.at(-1)!.length).toBeLessThan(1_048_572);
+  expect(Math.max(...multipart.multipart!.parts.map(part => part.length))).toBeLessThan(100_000);
 }, 30_000);
 
 test("Web compaction rebuilds attachments after trimming an oversized oldest image message", () => {

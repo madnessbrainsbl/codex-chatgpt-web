@@ -28,8 +28,12 @@ export function chatGptComposerSelectorForUrl(url: string): string {
   if (!conversation) return CHATGPT_COMPOSER_SELECTOR;
   const composer = `:is(${CHATGPT_COMPOSER_SELECTOR})`;
   // Saved-chat hydration can leave an optimistic composer mounted beside the server-owned one.
+  const localOwner = '[data-map-composer-conversation^="local-chatgpt:"]';
+  const serverOwner = `[data-map-composer-conversation]:not(${localOwner})`;
   return `[data-map-composer-conversation=${JSON.stringify(conversation)}] ${composer}, `
-    + `${composer}:not([data-map-composer-conversation] *)`;
+    + `${composer}:not([data-map-composer-conversation] *), `
+    // Newly created chats can keep their client owner after the URL gains a server id.
+    + `html:not(:has(${serverOwner})) ${localOwner} ${composer}`;
 }
 
 export const CHATGPT_EFFORT_CONTROL_SELECTOR = [

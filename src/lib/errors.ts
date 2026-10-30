@@ -207,6 +207,8 @@ export function inferHttpStatusFromAdapterMessage(message: string): number {
   // subscription/permission wording.
   if (isAuthenticationMessage(lower)) return 401;
   if (isSubscriptionGateMessage(lower) || isPermissionMessage(lower)) return 403;
+  // A missing local editor is not evidence that the upstream model is overloaded.
+  if (lower.startsWith("chatgpt composer is unavailable.")) return 502;
   if (
     lower.includes("unavailable") ||
     lower.includes("overloaded") ||

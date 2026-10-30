@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { chromium } from "playwright-core";
 import { ChatGptBrowserWorker, insertPlainTextIntoComposer } from "../src/adapters/chatgpt-web/browser-worker";
+import { adapterFailureFromMessage, httpStatusFromTerminalError } from "../src/lib/errors";
 
 /**
  * The composer insert runs inside the page, where the caret state is whatever the last UI
@@ -87,6 +88,14 @@ test("reports a genuinely rejected edit as a failure", () => {
   expect(insertPlainTextIntoComposer(composer, "staged part")).toBeFalse();
 });
 
+test("a missing composer reaches Codex as a browser failure instead of model capacity", () => {
+  const message = "ChatGPT composer is unavailable. Reload ChatGPT and retry the task.";
+  const failure = adapterFailureFromMessage(message);
+  expect(failure).toMatchObject({ httpStatus: 502, error: { message, code: "upstream_server_error" } });
+  expect(httpStatusFromTerminalError(failure.error)).toBe(502);
+  expect(adapterFailureFromMessage("The server is busy").error.code).toBe("server_is_overloaded");
+});
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("saved-thread hydration never inserts into its optimistic composer", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
@@ -134,6 +143,33 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("saved-thread composer scope 
       expect(error).toBeInstanceOf(Error);
       expect(error.cause.message).toContain("count was 0");
       expect(await page.locator('[data-map-composer-conversation="other"]').innerText()).toContain("Other draft");
+    }
+  } finally { await browser.close(); }
+}, 15_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("retained chats keep their sole local composer after acquiring a conversation URL", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.route("https://chatgpt.com/**", route => route.fulfill({ contentType: "text/html", body: `
+      <div data-map-composer-conversation="local-chatgpt:temporary">
+        <form data-chatgpt-composer><div data-composer-markdown contenteditable="true" role="textbox" style="min-height:40px"></div></form>
+      </div>` }));
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    for (const path of ["/g/g-p-0123456789abcdef0123456789abcdef-demo/c/current", "/c/current", "/c/current?temporary-chat=true"]) {
+      await page.goto("https://chatgpt.com" + path);
+      const composer = await worker.activeComposer(page, 1_000);
+      expect(await composer.isEditable()).toBeTrue();
+      await worker.insertPromptText(page, "Real tool result");
+      expect(await worker.attachedPromptText(page)).toBe("Real tool result");
+      await page.locator("body").evaluate(element => element.insertAdjacentHTML("beforeend", `
+        <form><div id="prompt-textarea" contenteditable="true">Other draft</div></form>`));
+      await expect(worker.activeComposer(page, 500)).rejects.toBeInstanceOf(Error);
+      expect(await page.locator("#prompt-textarea").innerText()).toBe("Other draft");
+      await page.locator("#prompt-textarea").evaluate(element => element.parentElement!.remove());
+      await page.locator("body").evaluate(element => element.insertAdjacentHTML("beforeend", `
+        <div data-map-composer-conversation="other" hidden></div>`));
+      await expect(worker.activeComposer(page, 500)).rejects.toBeInstanceOf(Error);
     }
   } finally { await browser.close(); }
 }, 15_000);

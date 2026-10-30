@@ -30,9 +30,9 @@ test("a 264k-character Plus message is staged without compacting or dropping the
   const inline = compileChatGptWebPrompt(parsed, caps, undefined, { textTools: true });
   expect(inline.text.length).toBeGreaterThan(250_000);
   const parts = resolveBiggerContextMultipartParts(parsed, caps, false, undefined, true);
-  expect(parts).toBe(2);
+  expect(parts).toBe(6);
   const compiled = compileChatGptWebPrompt(parsed, caps, undefined, { textTools: true, experimentalMultipartParts: parts });
-  expect(compiledChatGptWebMessages(compiled).every(text => text.length <= 200_000)).toBeTrue();
+  expect(compiledChatGptWebMessages(compiled).every(text => text.length <= 100_000)).toBeTrue();
   expect(compiled.multipart!.parts.flatMap(part => JSON.parse(part).records)
     .filter(record => record.kind === "message").map(record => record.message.content))
     .toEqual(parsed.context.messages.map(message => message.content));
@@ -41,7 +41,7 @@ test("a 264k-character Plus message is staged without compacting or dropping the
 });
 
 test("an oversized individual JSON record is fragmented losslessly instead of triggering compaction", () => {
-  const parsed = request("x".repeat(600_000) + '日本語😀 \\"`'.repeat(1000));
+  const parsed = request("x".repeat(450_000) + '日本語😀 \\"`'.repeat(1000));
   parsed._chatgptModelFamily = "6";
   const original = structuredClone(parsed);
   const caps = { ...capabilities, proAvailable: false };
@@ -51,10 +51,9 @@ test("an oversized individual JSON record is fragmented losslessly instead of tr
   expect(compiled.multipart!.parts.some(part => JSON.parse(part).records.some((record: any) => record.kind === "fragment"))).toBeTrue();
   expect(multipartRecords(compiled.multipart!.parts).filter(record => record.kind === "message")[0].message.content)
     .toBe(parsed.context.messages[0]!.content);
-  expect(compiledChatGptWebMessages(compiled).every(text => text.length <= 211_256)).toBeTrue();
-  expect(compiledChatGptWebMessages(compiled).at(-1)!.length).toBeLessThanOrEqual(200_000);
+  expect(compiledChatGptWebMessages(compiled).every(text => text.length <= 100_000)).toBeTrue();
   expect(parsed).toEqual(original);
-});
+}, 15_000);
 
 test("usage counts the configured plugin name carried by the submitted prompt", () => {
   const parsed = request("Inspect the repository.");
@@ -130,7 +129,7 @@ test("GPT-6 Sol stages complete Plus and Pro history with consistent usage accou
     const parts = resolveBiggerContextMultipartParts(parsed, caps);
     expect(parts).toBe(proAvailable ? 2 : 6);
     const staged = compileChatGptWebPrompt(parsed, caps, undefined, { experimentalMultipartParts: parts });
-    expect(staged.multipart!.parts.flatMap(part => JSON.parse(part).records).map(record => record.message.content))
+    expect(multipartRecords(staged.multipart!.parts).map(record => record.message.content))
       .toEqual(parsed.context.messages.map(message => message.content));
     expect(estimateChatGptWebUsage(parsed, { answer: "done" }, caps, true).inputTokens)
       .toBe(estimateCompiledChatGptWebInputTokens(staged, parsed.modelId));
@@ -164,11 +163,11 @@ test("GPT-6 compaction respects the selected account and effort", () => {
   expect(compileChatGptWebPrompt(parsed, capabilities, undefined, { experimentalMultipartParts: parts }).multipart!.parts).toHaveLength(6);
 });
 
-test("Plus history is rebalanced into smaller Instant uploads and a larger selected-mode final message", () => {
+test("Plus history is rebalanced within the upload cap without reducing its context budget", () => {
   const plus = { ...capabilities, proAvailable: false, extraHighAvailable: false };
   const parsed = request("");
   parsed.context.messages = Array.from({ length: 60 }, (_, index) => ({
-    role: "user", content: `record-${index}: ${"word ".repeat(3000)}`, timestamp: index + 1,
+    role: "user", content: `record-${index}: ${"word ".repeat(1400)}`, timestamp: index + 1,
   }));
   for (const compaction of [false, true]) {
     parsed._compactionRequest = compaction;
@@ -194,14 +193,14 @@ test("multipart planning leaves room for final attachments and execution instruc
   ]) {
     const caps = { ...capabilities, proAvailable: scenario.proAvailable };
     const parsed = request("");
-    const texts = Array.from({ length: 36 }, (_, index) => `record ${index}: ${"word ".repeat(5_000)}`);
+    const texts = Array.from({ length: 36 }, (_, index) => `record ${index}: ${"word ".repeat(scenario.proAvailable ? 5_000 : 2_000)}`);
     parsed.context.messages = texts.map((content, index) => ({ role: "user", content, timestamp: index + 1 }));
     const images = Array.from({ length: scenario.images }, (_, index) => ({
       type: "image" as const, imageUrl: `data:image/png;base64,partition-image-${index}`, detail: "original" as const,
     }));
     if (images.length) parsed.context.messages.push({ role: "user", content: images, timestamp: 37 });
     if (scenario.schema) parsed.options.outputFormat = {
-      type: "json_schema", name: "result", strict: true, schema: { type: "string", description: "schema ".repeat(24_000) },
+      type: "json_schema", name: "result", strict: true, schema: { type: "string", description: "schema ".repeat(6_000) },
     };
     const compiled = compileChatGptWebPrompt(parsed, caps, undefined, { experimentalMultipartParts: 6 });
     const records = compiled.multipart!.parts.flatMap(part => JSON.parse(part).records);

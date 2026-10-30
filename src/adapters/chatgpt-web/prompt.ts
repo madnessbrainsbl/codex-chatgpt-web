@@ -407,16 +407,18 @@ function partitionMultipartContext(
 ): ChatGptWebMultipartParts {
   if (budgets.length !== totalParts) throw new Error("ChatGPT multipart budget count does not match parts");
   records = records.flatMap((record, record_index): MultipartContextRecord[] => {
-    const fits = (candidate: MultipartContextRecord) => {
+    const fits = (candidate: MultipartContextRecord, fraction = 1) => {
       const weight = multipartRecordWeight(candidate);
-      return budgets.some(budget => weight.tokens <= budget.tokens && weight.chars <= budget.chars);
+      return budgets.some(budget => weight.tokens <= budget.tokens * fraction && weight.chars <= budget.chars * fraction);
     };
     if (fits(record)) return [record];
     const json = withoutRetiredTurnHandles(JSON.stringify(record));
     const pieces: string[] = [];
     const split = (data: string): void => {
+      // Leave room to pack multiple fragments into one message. Near-full fragments can
+      // otherwise need eight messages even when their combined payload fits into six.
       // Reserve the maximum possible index width before choosing fragment boundaries.
-      if (fits({ kind: "fragment", record_index, fragment_index: json.length, total_fragments: json.length, data })) {
+      if (fits({ kind: "fragment", record_index, fragment_index: json.length, total_fragments: json.length, data }, 0.5)) {
         pieces.push(data);
         return;
       }

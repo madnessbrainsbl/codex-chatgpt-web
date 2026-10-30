@@ -940,12 +940,22 @@ export class ChatGptSubmissionRejectionObserver {
     if (!this.page) throw new Error("Cannot capture submission alerts before observing its page");
     const generation = this.generation;
     const baseline = await this.page.evaluateHandle(() => {
+      const turnSelector = '[data-turn-key], [data-turn-id-container], [data-testid^="conversation-turn-"]';
+      const turnIdentity = (element: Element): string | null => element.getAttribute("data-turn-key")
+        ?? element.getAttribute("data-turn-id-container") ?? element.getAttribute("data-testid");
+      const previousTurns = new Set([...document.querySelectorAll(turnSelector)].map(turnIdentity));
       const errors = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[role="alert"]')]
-        .filter(element => !element.closest('.markdown, [data-turn-key], [data-turn-id-container], [data-message-author-role], [data-user-message-bubble], [contenteditable="true"]')
+        .filter(element => !element.closest('.markdown, [data-markdown-text-style="assistant-message"], [data-message-author-role], [data-user-message-bubble], [contenteditable="true"]')
           && element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
-          && /^The message you submitted was too long(?:, please edit it and resubmit)?\.$/.test(element.innerText.trim()));
+          && /^(?:The message you submitted was too long(?:, please edit it and resubmit)?\.|Отправленное вами сообщение слишком длинное\. Отредактируйте его и отправьте снова\.)$/.test(element.innerText.trim()));
       const initial = new WeakSet(errors());
-      return { hasNewSizeError: () => errors().some(element => !initial.has(element)) };
+      return { hasNewSizeError: () => errors().some(element => {
+        if (initial.has(element)) return false;
+        const turn = element.closest(turnSelector);
+        // Product errors can sit beside a user bubble in the newly submitted virtualized turn.
+        // Earlier turns and quoted/model-generated alerts cannot reject the current submission.
+        return !turn || !previousTurns.has(turnIdentity(turn));
+      }) };
     });
     if (generation !== this.generation) { await baseline.dispose(); return; }
     this.alertBaseline = baseline;
@@ -1141,8 +1151,8 @@ export function assertChatGptWebInputWithinLimits(
     && promptChars > browserComposerCharLimit
   ) {
     throw new ChatGptWebAdapterError(
-      `This prompt contains ${promptChars.toLocaleString("en-US")} inline characters, which exceeds the measured ${browserComposerCharLimit.toLocaleString("en-US")}-character ChatGPT composer boundary for this account and effort. Run /compact, then retry this Web model.`,
-      { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+      `This prompt contains ${promptChars.toLocaleString("en-US")} inline characters, which exceeds the configured ${browserComposerCharLimit.toLocaleString("en-US")}-character ChatGPT composer boundary for this account and effort. Enable Bigger Context to split this message before retrying; this does not establish that the conversation is full.`,
+      { status: 413, errorType: "invalid_request_error", code: "message_length_exceeds_limit", retryable: false },
     );
   }
   if (browserMessageTokenLimit !== undefined && estimatedMessageTokens > browserMessageTokenLimit) {
@@ -1201,8 +1211,8 @@ export function assertChatGptWebMultipartInputWithinLimits(
     );
     if (browserComposerCharLimit !== undefined && messageChars > browserComposerCharLimit) {
       throw new ChatGptWebAdapterError(
-        `A Bigger Context ${label} contains ${messageChars.toLocaleString("en-US")} characters, which exceeds the measured ${browserComposerCharLimit.toLocaleString("en-US")}-character ChatGPT composer boundary. The bridge will not split an individual Codex message or JSON record; compact the task before retrying.`,
-        { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+        `A Bigger Context ${label} contains ${messageChars.toLocaleString("en-US")} characters, which exceeds the configured ${browserComposerCharLimit.toLocaleString("en-US")}-character ChatGPT composer boundary. The lossless multipart plan cannot fit this upload; no browser message was sent. This does not establish that the conversation is full.`,
+        { status: 413, errorType: "invalid_request_error", code: "message_length_exceeds_limit", retryable: false },
       );
     }
     if (browserMessageTokenLimit !== undefined && messageTokens > browserMessageTokenLimit) {
@@ -1264,6 +1274,7 @@ export function resolveChatGptWebMultipartStagingMode(
   const efforts: readonly ChatGptWebModelMode["effort"][] = modelId === CHATGPT_WEB_LUNA_MODEL_ID ? ["low"] : capabilities.proAvailable
     ? ["low", "medium", "max"]
     : ["low", "medium"];
+  let fitsComposer = false;
   for (const effort of efforts) {
     const mode = resolveChatGptWebModelMode(modelId, effort, capabilities);
     const limits = resolveChatGptWebTransportLimits(modelId, effort, capabilities);
@@ -1271,11 +1282,13 @@ export function resolveChatGptWebMultipartStagingMode(
     const tokenFits = maxStageMessageTokens <= messageTokenLimit;
     const charsFit = limits.browserComposerCharLimit === undefined
       || maxStageChars <= limits.browserComposerCharLimit;
+    fitsComposer ||= charsFit;
     if (tokenFits && charsFit) return mode;
   }
   throw new ChatGptWebAdapterError(
     `No ChatGPT effort available to this account can carry a Bigger Context stage with ${maxStageMessageTokens.toLocaleString("en-US")} estimated tokens and ${maxStageChars.toLocaleString("en-US")} characters.`,
-    { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+    { status: fitsComposer ? 400 : 413, errorType: "invalid_request_error",
+      code: fitsComposer ? "context_length_exceeded" : "message_length_exceeds_limit", retryable: false },
   );
 }
 

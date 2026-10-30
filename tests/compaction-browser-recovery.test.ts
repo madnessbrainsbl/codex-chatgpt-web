@@ -146,7 +146,7 @@ test.each([
       prepareResume: prepare,
     }, owned ? "owned-surface" : undefined, page, retained);
     if (sizeRejected) {
-      await expect(run).rejects.toMatchObject({ code: "context_length_exceeded", retryable: false });
+      await expect(run).rejects.toMatchObject({ status: 413, code: "message_length_exceeds_limit", retryable: false });
       expect(rejectionAbortedWait).toBeTrue();
       expect(sendBudgets).toHaveLength(2);
       expect(actions.filter(action => action === "ack")).toHaveLength(1);
